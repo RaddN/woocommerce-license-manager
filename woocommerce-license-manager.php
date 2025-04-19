@@ -1110,9 +1110,12 @@ class WC_Product_License_Manager
     }
 }
 
+require_once plugin_dir_path(__FILE__) . 'include/admin.php';
+
 function product_license_init()
 {
     new WC_Product_License_Manager();
+    new WC_Product_License_Admin();
 }
 
 add_action('plugins_loaded', 'product_license_init');

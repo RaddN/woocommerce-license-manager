@@ -1,0 +1,138 @@
+/* General styling for the license manager container */
+.wc-license-manager-keys {
+    font-family: Arial, sans-serif;
+    margin: 20px auto;
+    padding: 20px;
+    background-color: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    max-width: 800px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Styling for each license key item */
+.license-key-item {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 5px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.license-key-item:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Product name styling */
+.license-key-item h4 {
+    margin: 0 0 10px;
+    font-size: 1.125rem;
+    color: #333;
+}
+
+/* License details styling */
+.license-details p {
+    margin: 5px 0;
+    font-size: 0.9375rem;
+    color: #555;
+}
+
+.license-details strong {
+    color: #333;
+}
+
+/* Styling for license key code */
+.license-details code {
+    font-family: monospace;
+    background-color: #f4f4f4;
+    padding: 4px 6px;
+    border-radius: 3px;
+    color: #d63384;
+    font-size: 0.875rem;
+}
+
+/* Status styling */
+.status-active {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.status-inactive {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+/* Active sites section */
+.active-sites {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px solid #ddd;
+}
+
+.active-sites h5 {
+    margin: 0 0 10px;
+    font-size: 1rem;
+    color: #333;
+}
+
+.active-sites ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.active-sites li {
+    margin-bottom: 5px;
+    font-size: 0.9375rem;
+    color: #555;
+}
+
+.active-sites .activation-date {
+    font-size: 0.8125rem;
+    color: #888;
+}
+
+/* Deactivate link styling */
+.deactivate-site {
+    margin-left: 10px;
+    font-size: 0.8125rem;
+    color: #007bff;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.deactivate-site:hover {
+    text-decoration: underline;
+    color: #0056b3;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .wc-license-manager-keys {
+        padding: 15px;
+    }
+
+    .license-key-item {
+        padding: 10px;
+    }
+
+    .license-key-item h4 {
+        font-size: 1rem;
+    }
+
+    .license-details p {
+        font-size: 0.875rem;
+    }
+
+    .active-sites h5 {
+        font-size: 0.9375rem;
+    }
+
+    .active-sites li {
+        font-size: 0.875rem;
+    }
+}

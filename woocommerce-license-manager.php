@@ -499,23 +499,26 @@ class WC_Product_License_Manager
 
         foreach ($order->get_items() as $item_id => $item) {
             $license_key = wc_get_order_item_meta($item_id, '_license_key', true);
-            $license_data = wc_get_order_item_meta($item_id, '_license_data', true);
 
             if (!$license_key) continue;
 
             $has_licenses = true;
-            $product_name = $item->get_name();
-            $status = isset($license_data['status']) ? $license_data['status'] : 'active';
-            $activations = isset($license_data['sites_active']) ? $license_data['sites_active'] . '/' . $license_data['sites_allowed'] : '0/1';
-            $expires = isset($license_data['expires_at']) && $license_data['expires_at']
-                ? date_i18n(get_option('date_format'), strtotime($license_data['expires_at']))
-                : __('Never', 'wc-product-license');
 
-            echo '<p><strong>' . __('Product:', 'wc-product-license') . '</strong> ' . esc_html($product_name) . '</p>';
-            echo '<p><strong>' . __('License Key:', 'wc-product-license') . '</strong> ' . esc_html($license_key) . '</p>';
-            echo '<p><strong>' . __('Status:', 'wc-product-license') . '</strong> ' . esc_html(ucfirst($status)) . '</p>';
-            echo '<p><strong>' . __('Activations:', 'wc-product-license') . '</strong> ' . esc_html($activations) . '</p>';
-            echo '<p><strong>' . __('Expires:', 'wc-product-license') . '</strong> ' . esc_html($expires) . '</p>';
+            // Use get_license_data to fetch license details
+            $license_data = $this->get_license_data(['key' => $license_key]);
+
+            if (is_wp_error($license_data)) {
+                echo '<p>' . __('Error fetching license data.', 'wc-product-license') . '</p>';
+                continue;
+            }
+
+            $license_data = $license_data->get_data();
+
+            echo '<p><strong>' . __('Product:', 'wc-product-license') . '</strong> ' . esc_html($license_data['product_name']) . '</p>';
+            echo '<p><strong>' . __('License Key:', 'wc-product-license') . '</strong> ' . esc_html($license_data['license_key']) . '</p>';
+            echo '<p><strong>' . __('Status:', 'wc-product-license') . '</strong> ' . esc_html(ucfirst($license_data['status'])) . '</p>';
+            echo '<p><strong>' . __('Activations:', 'wc-product-license') . '</strong> ' . esc_html($license_data['sites_active'] . '/' . $license_data['sites_allowed']) . '</p>';
+            echo '<p><strong>' . __('Expires:', 'wc-product-license') . '</strong> ' . esc_html($license_data['expires_at'] ? date_i18n(get_option('date_format'), strtotime($license_data['expires_at'])) : __('Never', 'wc-product-license')) . '</p>';
 
             if (!empty($license_data['active_sites'])) {
                 echo '<p><strong>' . __('Active Sites:', 'wc-product-license') . '</strong></p>';
@@ -844,6 +847,17 @@ class WC_Product_License_Manager
         }
 
         $license = $this->get_license_by_key($license_key);
+        // Check if site is already activated
+        $active_sites = maybe_unserialize($license->active_sites) ?: [];
+        if (isset($active_sites[$site_url])) {
+            return rest_ensure_response([
+                'success' => true,
+                'message' => __('License successfully activated.', 'wc-product-license'),
+                'sites_active' => count($active_sites),
+                'sites_allowed' => (int) $license->sites_allowed,
+                'active_sites' => $active_sites
+            ]);
+        }
         if (!$license) {
             return new WP_Error('license_not_found', __('License key not found.', 'wc-product-license'), ['status' => 404]);
         }

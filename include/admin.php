@@ -937,18 +937,21 @@ class WC_Product_License_Admin
                         <h2><?php _e('API Documentation', 'wc-product-license'); ?></h2>
                         <div class="wc-license-api-docs">
                             <p><?php _e('Use the following endpoints to verify and manage licenses programmatically:', 'wc-product-license'); ?></p>
-
+                            <h4><?php _e('Get License info', 'wc-product-license'); ?></h4>
+                            <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}'); ?></code>
+                            <p><?php _e('Parameters: license_key'); ?></p>
+                            
                             <h4><?php _e('Verify License', 'wc-product-license'); ?></h4>
                             <code>POST <?php echo site_url('wp-json/wc-license/v1/verify'); ?></code>
                             <p><?php _e('Parameters: license_key, product_id, instance, domain', 'wc-product-license'); ?></p>
 
                             <h4><?php _e('Activate License', 'wc-product-license'); ?></h4>
-                            <code>POST <?php echo site_url('wp-json/wc-license/v1/activate'); ?></code>
-                            <p><?php _e('Parameters: license_key, product_id, instance, domain', 'wc-product-license'); ?></p>
+                            <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}/activate'); ?></code>
+                            <p><?php _e('Parameters: license_key'); ?></p>
 
                             <h4><?php _e('Deactivate License', 'wc-product-license'); ?></h4>
-                            <code>POST <?php echo site_url('wp-json/wc-license/v1/deactivate'); ?></code>
-                            <p><?php _e('Parameters: license_key, product_id, instance, domain', 'wc-product-license'); ?></p>
+                            <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}/deactivate'); ?></code>
+                            <p><?php _e('Parameters: license_key'); ?></p>
                         </div>
                     </div>
                 </div>

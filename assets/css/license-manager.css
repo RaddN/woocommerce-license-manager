@@ -65,6 +65,10 @@
     font-weight: bold;
 }
 
+.status-expired {
+    color: #ff0000;
+    font-weight: bold;
+}
 /* Active sites section */
 .active-sites {
     margin-top: 15px;
@@ -136,3 +140,394 @@
         font-size: 0.875rem;
     }
 }
+
+
+
+/**
+ * CSS for license manager dropdown and modals
+ * Save this as assets/css/license-manager.css
+ */
+ .wc-license-manager-keys {
+    margin-bottom: 30px;
+}
+
+.license-key-item {
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    position: relative;
+    transition: all 0.3s ease;
+}
+
+.license-key-item.deleting {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.license-header {
+    padding: 15px;
+    border-bottom: 1px solid #e5e5e5;
+    background: #f7f7f7;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-radius: 4px 4px 0 0;
+}
+
+.license-header h4 {
+    margin: 0;
+    padding: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.license-details {
+    padding: 15px;
+}
+
+.license-key-item p {
+    margin: 0 0 10px;
+}
+
+.active-sites {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px dashed #e5e5e5;
+}
+
+.active-sites h5 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.active-sites ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.active-sites li {
+    padding: 8px 0;
+    border-bottom: 1px dotted #e5e5e5;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.active-sites li:last-child {
+    border-bottom: none;
+}
+
+.active-sites .activation-date {
+    font-size: 12px;
+    color: #888;
+    margin-left: 5px;
+}
+
+.deactivate-site {
+    font-size: 12px;
+    margin-left: auto;
+    color: #a00;
+    text-decoration: none;
+}
+
+.deactivate-site:hover {
+    text-decoration: underline;
+}
+
+/* Status badges */
+.status-active {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: #c6e1c6;
+    color: #5b841b;
+    font-size: 12px;
+}
+
+.status-inactive {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: #f8dda7;
+    color: #94660c;
+    font-size: 12px;
+}
+
+.status-expired {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: #eba3a3;
+    color: #761919;
+    font-size: 12px;
+}
+
+/* Three-dot dropdown menu */
+.license-actions {
+    position: relative;
+}
+
+.dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.dropdown-toggle {
+    background: none;
+    border: none;
+    padding: 5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    border-radius: 3px;
+}
+
+.dropdown-toggle:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.dropdown-toggle .dot {
+    width: 4px;
+    height: 4px;
+    background-color: #333;
+    border-radius: 50%;
+    margin: 0 1px;
+}
+
+.dropdown-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    min-width: 180px;
+    z-index: 100;
+    padding: 5px 0;
+    display: none;
+}
+
+.dropdown-menu.active {
+    display: block;
+}
+
+.dropdown-menu li {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.dropdown-menu a {
+    display: block;
+    padding: 8px 15px;
+    text-decoration: none;
+    color: #333;
+    font-size: 14px;
+}
+
+.dropdown-menu a:hover {
+    background: #f5f5f5;
+}
+
+.dropdown-menu a.delete-license {
+    color: #a00;
+}
+
+/* Message container */
+#license-action-message {
+    padding: 10px 15px;
+    margin: 15px 0;
+    border-radius: 3px;
+    font-size: 14px;
+}
+
+#license-action-message.success {
+    background: #c6e1c6;
+    border: 1px solid #a7ce9d;
+    color: #5b841b;
+}
+
+#license-action-message.error {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+}
+
+
+/* License Modal Overlay and Container */
+.wc-license-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    z-index: 9999;
+    justify-content: center;
+    align-items: center;
+  }
+  
+  .wc-license-modal-overlay.active {
+    display: flex;
+  }
+  
+  .upgrade-options-modal {
+    background-color: #fff;
+    border-radius: 6px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+    width: 100%;
+    max-width: 550px;
+    padding: 2rem;
+    position: relative;
+    animation: modalFadeIn 0.3s ease-out;
+  }
+  
+  @keyframes modalFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  /* Typography */
+  .upgrade-options-modal h3 {
+    margin: 0 0 1.2rem;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #333;
+    border-bottom: 1px solid #e5e5e5;
+    padding-bottom: 0.8rem;
+  }
+  
+  .upgrade-options-modal p {
+    margin: 0 0 1.5rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: #555;
+  }
+  
+  /* Upgrade Options List */
+  .upgrade-options-list {
+    margin-bottom: 1.8rem;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+  }
+  
+  .upgrade-option {
+    border-bottom: 1px solid #f0f0f0;
+    padding: 1rem;
+    transition: background-color 0.2s ease;
+  }
+  
+  .upgrade-option:last-child {
+    border-bottom: none;
+  }
+  
+  .upgrade-option:hover {
+    background-color: #f7f7f7;
+  }
+  
+  .upgrade-option label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    width: 100%;
+  }
+  
+  .upgrade-option input[type="radio"] {
+    margin-right: 12px;
+    cursor: pointer;
+  }
+  
+  .variation-title {
+    font-weight: 600;
+    margin-right: 12px;
+    color: #333;
+    min-width: 80px;
+  }
+  
+  .variation-details {
+    color: #555;
+    font-size: 0.95rem;
+  }
+  
+  .woocommerce-Price-amount {
+    font-weight: 600;
+    color: #2a6dc0;
+  }
+  
+  /* Action Buttons */
+  .upgrade-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 1.5rem;
+  }
+  
+  .button {
+    padding: 0.6rem 1.2rem;
+    font-size: 0.95rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  
+  .button.cancel-upgrade {
+    background-color: #f5f5f5;
+    border: 1px solid #d5d5d5;
+    color: #555;
+  }
+  
+  .button.cancel-upgrade:hover {
+    background-color: #e8e8e8;
+  }
+  
+  .button.button-primary {
+    background-color: #2a6dc0;
+    border: 1px solid #2463b0;
+    color: white;
+  }
+  
+  .button.button-primary:hover {
+    background-color: #245aa9;
+  }
+  
+  /* Responsive adjustments */
+  @media (max-width: 600px) {
+    .upgrade-options-modal {
+      max-width: 90%;
+      padding: 1.5rem;
+    }
+    
+    .upgrade-option label {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    
+    .variation-title {
+      margin-right: 0;
+      margin-bottom: 4px;
+    }
+    
+    .upgrade-actions {
+      flex-direction: column;
+    }
+    
+    .button {
+      width: 100%;
+      text-align: center;
+    }
+  }

@@ -78,6 +78,14 @@ class WC_Product_License_Manager
         add_filter('woocommerce_add_cart_item_data', [$this, 'modify_cart_item_price'], 10, 3);
         add_action('woocommerce_before_calculate_totals', [$this, 'set_license_variation_price'], 10, 1);
         add_action('woocommerce_single_product_summary', [$this, 'force_display_license_options'], 1);
+
+        // Add new AJAX handlers
+        add_action('wp_ajax_deactivate_all_sites', [$this, 'ajax_deactivate_all_sites']);
+        add_action('wp_ajax_delete_license', [$this, 'ajax_delete_license']);
+        add_action('wp_ajax_get_upgrade_options', [$this, 'ajax_get_upgrade_options']);
+
+        // Add upgrade processing
+        add_action('woocommerce_add_to_cart', [$this, 'process_license_upgrade'], 10, 6);
     }
 
     /**
@@ -453,7 +461,7 @@ class WC_Product_License_Manager
      */
     public function add_license_metabox_to_orders()
     {
-        
+
         $screen = $this->get_order_screen_id();
 
         add_meta_box(
@@ -549,9 +557,10 @@ class WC_Product_License_Manager
     /**
      * Add license keys endpoint
      */
-    public function add_license_keys_endpoint() {
+    public function add_license_keys_endpoint()
+    {
         add_rewrite_endpoint('license-keys', EP_ROOT | EP_PAGES);
-        
+
         // Check if we need to flush rewrite rules
         if (get_option('wc_license_manager_flush_rewrite_rules', false)) {
             flush_rewrite_rules();
@@ -586,7 +595,11 @@ class WC_Product_License_Manager
             'nonce' => wp_create_nonce('wc-license-manager'),
             'i18n' => [
                 'activating' => __('Activating...', 'wc-product-license'),
-                'deactivating' => __('Deactivating...', 'wc-product-license')
+                'deactivating' => __('Deactivating...', 'wc-product-license'),
+                'deactivatingAll' => __('Deactivating all sites...', 'wc-product-license'),
+                'deleting' => __('Deleting...', 'wc-product-license'),
+                'confirmDeactivateAll' => __('Are you sure you want to deactivate all sites?', 'wc-product-license'),
+                'confirmDelete' => __('Are you sure you want to delete this license?', 'wc-product-license')
             ]
         ]);
 
@@ -599,16 +612,43 @@ class WC_Product_License_Manager
             $product = wc_get_product($license->product_id);
             $product_name = $product ? $product->get_name() : __('Unknown Product', 'wc-product-license');
             $active_sites = maybe_unserialize($license->active_sites) ?: [];
-            $status_class = $license->status === 'active' ? 'active' : 'inactive';
-            $expires = $license->expires_at
-                ? date_i18n(get_option('date_format'), strtotime($license->expires_at))
-                : __('Never', 'wc-product-license');
+            $is_expired = $license->expires_at && strtotime($license->expires_at) < time();
+            $status_class = $is_expired ? 'expired' : ($license->status === 'active' ? 'active' : 'inactive');
+            $expires = $license->expires_at ? date_i18n(get_option('date_format'), strtotime($license->expires_at)) : __('Never', 'wc-product-license');
 
             echo '<div class="license-key-item">';
+
+            // License header with title and dropdown menu
+            echo '<div class="license-header">';
             echo '<h4>' . esc_html($product_name) . '</h4>';
+
+            // 3-dot menu
+            echo '<div class="license-actions">';
+            echo '<div class="dropdown">';
+            echo '<button class="dropdown-toggle"><span class="dot"></span><span class="dot"></span><span class="dot"></span></button>';
+            echo '<ul class="dropdown-menu">';
+
+            // Delete option (only for expired licenses)
+            if ($is_expired) {
+                echo '<li><a href="#" class="delete-license" data-license-key="' . esc_attr($license->license_key) . '">' . __('Delete', 'wc-product-license') . '</a></li>';
+            }
+
+            // Deactivate All Sites (only if there are active sites)
+            if (!empty($active_sites)) {
+                echo '<li><a href="#" class="deactivate-all-sites" data-license-key="' . esc_attr($license->license_key) . '">' . __('Deactivate All Sites', 'wc-product-license') . '</a></li>';
+            }
+
+            // Upgrade/Downgrade Package
+            echo '<li><a href="#" class="upgrade-license" data-license-key="' . esc_attr($license->license_key) . '" data-product-id="' . esc_attr($license->product_id) . '">' . __('Upgrade/Downgrade Package', 'wc-product-license') . '</a></li>';
+
+            echo '</ul>';
+            echo '</div>'; // dropdown
+            echo '</div>'; // license-actions
+            echo '</div>'; // license-header
+
             echo '<div class="license-details">';
             echo '<p><strong>' . __('License Key:', 'wc-product-license') . '</strong> <code>' . esc_html($license->license_key) . '</code></p>';
-            echo '<p><strong>' . __('Status:', 'wc-product-license') . '</strong> <span class="status-' . esc_attr($status_class) . '">' . esc_html(ucfirst($license->status)) . '</span></p>';
+            echo '<p><strong>' . __('Status:', 'wc-product-license') . '</strong> <span class="status-' . esc_attr($status_class) . '">' . esc_html(ucfirst($status_class)) . '</span></p>';
             echo '<p><strong>' . __('Activations:', 'wc-product-license') . '</strong> ' . esc_html($license->sites_active . '/' . $license->sites_allowed) . '</p>';
             echo '<p><strong>' . __('Expires:', 'wc-product-license') . '</strong> ' . esc_html($expires) . '</p>';
 
@@ -616,7 +656,6 @@ class WC_Product_License_Manager
                 echo '<div class="active-sites">';
                 echo '<h5>' . __('Active Sites', 'wc-product-license') . '</h5>';
                 echo '<ul>';
-
                 foreach ($active_sites as $site_url => $activation_date) {
                     echo '<li>';
                     echo esc_html($site_url);
@@ -624,16 +663,175 @@ class WC_Product_License_Manager
                     echo ' <a href="#" class="deactivate-site" data-license-key="' . esc_attr($license->license_key) . '" data-site-url="' . esc_attr($site_url) . '">' . __('Deactivate', 'wc-product-license') . '</a>';
                     echo '</li>';
                 }
-
                 echo '</ul>';
                 echo '</div>';
             }
-
-            echo '</div>';
-            echo '</div>';
+            echo '</div>'; // license-details
+            echo '</div>'; // license-key-item
         }
 
-        echo '</div>';
+        echo '</div>'; // wc-license-manager-keys
+
+        // Add success/error message container
+        echo '<div id="license-action-message" style="display: none;"></div>';
+    }
+
+    /**
+     * Add AJAX handler for deactivating all sites for a license
+     * Add this method to your WC_Product_License_Manager class
+     */
+    public function ajax_deactivate_all_sites()
+    {
+        check_ajax_referer('wc-license-manager', 'nonce');
+
+        $license_key = sanitize_text_field($_POST['license_key']);
+        $license = $this->get_license_by_key($license_key);
+
+        if (!$license) {
+            wp_send_json_error(['message' => __('License key not found.', 'wc-product-license')]);
+        }
+
+        if ($license->user_id != get_current_user_id()) {
+            wp_send_json_error(['message' => __('You do not own this license key.', 'wc-product-license')]);
+        }
+
+        // Clear all active sites
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $wpdb->update(
+            $table_name,
+            [
+                'sites_active' => 0,
+                'active_sites' => maybe_serialize([])
+            ],
+            ['license_key' => $license_key]
+        );
+
+        wp_send_json_success([
+            'message' => __('All sites successfully deactivated.', 'wc-product-license')
+        ]);
+    }
+
+    /**
+     * Add AJAX handler for deleting a license
+     * Add this method to your WC_Product_License_Manager class
+     */
+    public function ajax_delete_license()
+    {
+        check_ajax_referer('wc-license-manager', 'nonce');
+
+        $license_key = sanitize_text_field($_POST['license_key']);
+        $license = $this->get_license_by_key($license_key);
+
+        if (!$license) {
+            wp_send_json_error(['message' => __('License key not found.', 'wc-product-license')]);
+        }
+
+        if ($license->user_id != get_current_user_id()) {
+            wp_send_json_error(['message' => __('You do not own this license key.', 'wc-product-license')]);
+        }
+
+        // Check if license is expired
+        $is_expired = $license->expires_at && strtotime($license->expires_at) < time();
+        if (!$is_expired) {
+            wp_send_json_error(['message' => __('Only expired licenses can be deleted.', 'wc-product-license')]);
+        }
+
+        // Delete the license
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $wpdb->delete($table_name, ['license_key' => $license_key]);
+
+        wp_send_json_success([
+            'message' => __('License successfully deleted.', 'wc-product-license')
+        ]);
+    }
+
+    /**
+     * Add AJAX handler for upgrade/downgrade package
+     * Add this method to your WC_Product_License_Manager class
+     */
+    public function ajax_get_upgrade_options()
+    {
+        check_ajax_referer('wc-license-manager', 'nonce');
+
+        $license_key = sanitize_text_field($_POST['license_key']);
+        $product_id = absint($_POST['product_id']);
+        $license = $this->get_license_by_key($license_key);
+
+        if (!$license) {
+            wp_send_json_error(['message' => __('License key not found.', 'wc-product-license')]);
+        }
+
+        if ($license->user_id != get_current_user_id()) {
+            wp_send_json_error(['message' => __('You do not own this license key.', 'wc-product-license')]);
+        }
+
+        // Get license variations for this product
+        $license_variations = get_post_meta($product_id, '_license_variations', true);
+        if (empty($license_variations)) {
+            wp_send_json_error(['message' => __('No upgrade options available.', 'wc-product-license')]);
+        }
+
+        // Get product info
+        $product = wc_get_product($product_id);
+        $product_name = $product ? $product->get_name() : __('Unknown Product', 'wc-product-license');
+
+        // Prepare upgrade URL to add to cart with package change
+        $upgrade_url = wc_get_page_permalink('cart') . '?add-to-cart=' . $product_id . '&license_upgrade=' . $license_key;
+
+        // Build HTML for upgrade modal
+        $html = '<div class="upgrade-options-modal">';
+        $html .= '<h3>' . sprintf(__('Upgrade/Downgrade Options for %s', 'wc-product-license'), esc_html($product_name)) . '</h3>';
+        $html .= '<p>' . __('Select a package to upgrade or downgrade to:', 'wc-product-license') . '</p>';
+        $html .= '<div class="upgrade-options-list">';
+
+        foreach ($license_variations as $index => $variation) {
+            $html .= '<div class="upgrade-option">';
+            $html .= '<label>';
+            $html .= '<input type="radio" name="upgrade_variation" value="' . esc_attr($index) . '">';
+            $html .= '<span class="variation-title">' . esc_html($variation['title']) . '</span>';
+            $html .= '<span class="variation-details">' . sprintf(
+                __('%d sites allowed, valid for %d days - %s', 'wc-product-license'),
+                $variation['sites'],
+                $variation['validity'],
+                wc_price($variation['price'])
+            ) . '</span>';
+            $html .= '</label>';
+            $html .= '</div>';
+        }
+
+        $html .= '</div>';
+        $html .= '<div class="upgrade-actions">';
+        $html .= '<a href="#" class="button cancel-upgrade">' . __('Cancel', 'wc-product-license') . '</a> ';
+        $html .= '<a href="#" class="button button-primary confirm-upgrade" data-base-url="' . esc_url($upgrade_url) . '">' . __('Proceed to Checkout', 'wc-product-license') . '</a>';
+        $html .= '</div>';
+        $html .= '</div>';
+
+        wp_send_json_success([
+            'html' => $html
+        ]);
+    }
+
+    /**
+     * Process license upgrade when adding to cart
+     * Add this method to your WC_Product_License_Manager class
+     */
+    public function process_license_upgrade($cart_item_key, $product_id, $quantity, $variation_id, $variation, $cart_item_data)
+    {
+        if (isset($_GET['license_upgrade']) && isset($_GET['upgrade_variation'])) {
+            $license_key = sanitize_text_field($_GET['license_upgrade']);
+            $variation_index = absint($_GET['upgrade_variation']);
+
+            // Store upgrade info in cart item
+            WC()->cart->cart_contents[$cart_item_key]['license_upgrade'] = [
+                'license_key' => $license_key,
+                'variation_index' => $variation_index
+            ];
+
+            // Add notice
+            wc_add_notice(__('License upgrade product added to cart. Complete checkout to upgrade your license.', 'wc-product-license'), 'notice');
+        }
     }
 
     /**
@@ -707,7 +905,7 @@ class WC_Product_License_Manager
             wp_send_json_error(['message' => __('License key not found.', 'wc-product-license')]);
         }
 
-        if ($license->user_id !== get_current_user_id()) {
+        if ($license->user_id != get_current_user_id()) {
             wp_send_json_error(['message' => __('You do not own this license key.', 'wc-product-license')]);
         }
 
@@ -761,8 +959,8 @@ class WC_Product_License_Manager
             wp_send_json_error(['message' => __('License key not found.', 'wc-product-license')]);
         }
 
-        if ($license->user_id !== get_current_user_id()) {
-            wp_send_json_error(['message' => __('You do not own this license key.', 'wc-product-license')]);
+        if ($license->user_id != get_current_user_id()) {
+            wp_send_json_error(['message' => __('You do not own this license key. ', 'wc-product-license')]);
         }
 
         // Remove site from active sites
@@ -1004,59 +1202,62 @@ class WC_Product_License_Manager
         return $query_vars;
     }
 
-    public function modify_cart_item_price($cart_item_data, $product_id, $variation_id) {
+    public function modify_cart_item_price($cart_item_data, $product_id, $variation_id)
+    {
         if (isset($_POST['license_variation']) && get_post_meta($product_id, '_is_license_product', true) === 'yes') {
             $license_variations = get_post_meta($product_id, '_license_variations', true);
             $selected_variation_index = absint($_POST['license_variation']);
-            
+
             if (isset($license_variations[$selected_variation_index]) && !empty($license_variations[$selected_variation_index]['price'])) {
                 // Store original price to restore it later if needed
                 $cart_item_data['original_price'] = get_post_meta($product_id, '_price', true);
-                
+
                 // Add license variation info
                 $cart_item_data['license_variation'] = $license_variations[$selected_variation_index];
             }
         }
-        
+
         return $cart_item_data;
     }
-    
+
     /**
      * Set custom price based on license variation
      */
-    public function set_license_variation_price($cart_object) {
+    public function set_license_variation_price($cart_object)
+    {
         if (is_admin() && !defined('DOING_AJAX')) {
             return;
         }
-    
+
         foreach ($cart_object->get_cart() as $cart_item) {
             if (isset($cart_item['license_variation']) && !empty($cart_item['license_variation']['price'])) {
                 $cart_item['data']->set_price($cart_item['license_variation']['price']);
             }
         }
     }
-    
+
     /**
      * Check if product is a license product and force display of license form
      */
-    public function force_display_license_options() {
+    public function force_display_license_options()
+    {
         global $product;
-        
+
         if (!$product || $product->get_type() !== 'simple' || !$product->is_downloadable()) {
             return;
         }
-        
+
         if (get_post_meta($product->get_id(), '_is_license_product', true) === 'yes') {
             // Force display license options when the product is a license product
             add_action('woocommerce_before_add_to_cart_button', [$this, 'display_license_options'], 10);
-            
+
             // Hide default price display and show it after license variations
             remove_action('woocommerce_single_product_summary', 'woocommerce_template_single_price', 10);
             add_action('woocommerce_before_add_to_cart_button', [$this, 'display_dynamic_price'], 9);
-            
+
             // Add necessary JS for price updates
             wp_enqueue_script('wc-license-price-updater', plugin_dir_url(__FILE__) . 'assets/js/price-updater.js', ['jquery'], '1.0.0', true);
-            
+
             // Pass variation prices to JS
             $license_variations = get_post_meta($product->get_id(), '_license_variations', true);
             if (!empty($license_variations)) {
@@ -1064,7 +1265,7 @@ class WC_Product_License_Manager
                 foreach ($license_variations as $index => $variation) {
                     $variation_prices[$index] = !empty($variation['price']) ? $variation['price'] : $product->get_price();
                 }
-                
+
                 wp_localize_script('wc-license-price-updater', 'licenseVariations', [
                     'prices' => $variation_prices,
                     'currencySymbol' => get_woocommerce_currency_symbol(),
@@ -1073,40 +1274,42 @@ class WC_Product_License_Manager
             }
         }
     }
-    
+
     /**
      * Display dynamic price container for JS updating
      */
-    public function display_dynamic_price() {
+    public function display_dynamic_price()
+    {
         global $product;
         echo '<div class="price license-product-price">';
         echo '<span class="price-label">' . __('Price:', 'wc-product-license') . '</span> ';
         echo '<span class="dynamic-price"></span>';
         echo '</div>';
     }
-    
+
     /**
      * Modified version of display_license_options to work with dynamic pricing
      */
-    public function display_license_options() {
+    public function display_license_options()
+    {
         global $product;
-        
+
         if (!$product || $product->get_type() !== 'simple' || !$product->is_downloadable() || get_post_meta($product->get_id(), '_is_license_product', true) !== 'yes') {
             return;
         }
-        
+
         $license_variations = get_post_meta($product->get_id(), '_license_variations', true);
         if (empty($license_variations)) {
             return;
         }
-        
+
         echo '<div class="license-variations">';
         echo '<h3>' . __('License Options', 'wc-product-license') . '</h3>';
-        
+
         echo '<div class="license-variation-selector">';
         foreach ($license_variations as $index => $variation) {
             $price = !empty($variation['price']) ? $variation['price'] : $product->get_price();
-            
+
             echo '<div class="license-variation-option">';
             echo '<label>';
             echo '<input type="radio" name="license_variation" value="' . esc_attr($index) . '" ' . ($index === array_key_first($license_variations) ? 'checked' : '') . ' data-price="' . esc_attr($price) . '">';
@@ -1138,7 +1341,8 @@ add_action('plugins_loaded', 'product_license_init');
 // Register activation hook
 register_activation_hook(__FILE__, 'wc_product_license_activate');
 
-function wc_product_license_activate() {
+function wc_product_license_activate()
+{
     // Set a flag to flush rewrite rules
     update_option('wc_license_manager_flush_rewrite_rules', true);
 }

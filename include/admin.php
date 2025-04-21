@@ -16,9 +16,6 @@ class WC_Product_License_Admin
         // Add admin menu items
         add_action('admin_menu', [$this, 'add_admin_menu']);
 
-        // Register settings
-        // add_action('admin_init', [$this, 'register_settings']);
-
         // Add custom actions to the licenses list table
         add_filter('bulk_actions-wc_license_keys', [$this, 'register_bulk_actions']);
         add_filter('handle_bulk_actions-wc_license_keys', [$this, 'handle_bulk_actions'], 10, 3);
@@ -27,7 +24,6 @@ class WC_Product_License_Admin
         add_action('wp_ajax_wc_license_activate', [$this, 'ajax_activate_license']);
         add_action('wp_ajax_wc_license_deactivate', [$this, 'ajax_deactivate_license']);
         add_action('wp_ajax_wc_license_delete', [$this, 'ajax_delete_license']);
-        // add_action('wp_ajax_wc_license_edit', [$this, 'ajax_edit_license']);
 
         // Enqueue admin scripts and styles
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_assets']);
@@ -40,27 +36,37 @@ class WC_Product_License_Admin
     {
         // Main License Keys menu
         add_menu_page(
-            __('License Keys', 'wc-product-license'),
-            __('License Keys', 'wc-product-license'),
+            __('Licenses Manage', 'wc-product-license'),
+            __('Licenses Manage', 'wc-product-license'),
             'manage_woocommerce',
-            'wc-license-keys',
-            [$this, 'render_licenses_page'],
+            'wc-license-dashboard',
+            [new WC_License_Analytics(), 'render_analytics_page'],
             'dashicons-lock',
             56 // Position after WooCommerce
         );
 
         // License Keys submenu
         add_submenu_page(
-            'wc-license-keys',
-            __('License Keys', 'wc-product-license'),
+            'wc-license-dashboard',
+            __('Licenses Manage', 'wc-product-license'),
+            __('Dashboard', 'wc-product-license'),
+            'manage_woocommerce',
+            'wc-license-dashboard',
+        );
+
+        // License Keys submenu
+        add_submenu_page(
+            'wc-license-dashboard',
+            __('All Licenses', 'wc-product-license'),
             __('All Licenses', 'wc-product-license'),
             'manage_woocommerce',
-            'wc-license-keys'
+            'wc-license-keys',
+            [$this, 'render_licenses_page'],
         );
 
         // Add New License submenu
         add_submenu_page(
-            'wc-license-keys',
+            'wc-license-dashboard',
             __('Add New License', 'wc-product-license'),
             __('Add New', 'wc-product-license'),
             'manage_woocommerce',
@@ -70,7 +76,7 @@ class WC_Product_License_Admin
 
         // Settings submenu
         add_submenu_page(
-            'wc-license-keys',
+            'wc-license-dashboard',
             __('License Settings', 'wc-product-license'),
             __('Settings', 'wc-product-license'),
             'manage_woocommerce',
@@ -90,7 +96,7 @@ class WC_Product_License_Admin
             'license-keys_page_wc-license-settings'
         ];
 
-        if (in_array($hook, $admin_hooks)) {
+        // if (in_array($hook, $admin_hooks)) {
             wp_enqueue_style(
                 'wc-license-admin-styles',
                 plugin_dir_url(dirname(__FILE__)) . 'assets/css/admin.css',
@@ -115,10 +121,21 @@ class WC_Product_License_Admin
                     'confirmActivate' => __('Are you sure you want to activate this license?', 'wc-product-license'),
                     'processing' => __('Processing...', 'wc-product-license'),
                     'success' => __('Success!', 'wc-product-license'),
-                    'error' => __('Error:', 'wc-product-license')
+                    'error' => __('Error:', 'wc-product-license'),
+                    'serverError' => __('Server error occurred. Please try again.', 'wc-product-license'),
+                    'licenseDetails' => __('License Details', 'wc-product-license'),
+                    'licenseKey' => __('License Key', 'wc-product-license'),
+                    'product' => __('Product', 'wc-product-license'),
+                    'user' => __('User', 'wc-product-license'),
+                    'status' => __('Status', 'wc-product-license'),
+                    'expiresAt' => __('Expires At', 'wc-product-license'),
+                    'sitesAllowed' => __('Sites Allowed', 'wc-product-license'),
+                    'sitesActive' => __('Sites Active', 'wc-product-license'),
+                    'activate' => __('Activate', 'wc-product-license'),
+                    'deactivate' => __('Deactivate', 'wc-product-license')
                 ]
             ]);
-        }
+        // }
     }
 
     /**
@@ -689,8 +706,8 @@ class WC_Product_License_Admin
         }
     }
 
-    /**
-     * Render the settings page
+    /** 
+     * Render the settings page 
      */
     public function render_settings_page()
     {
@@ -700,6 +717,84 @@ class WC_Product_License_Admin
             $this->save_settings();
             $settings_saved = true;
         }
+
+        // Handle license activation/deactivation
+        $license_status = '';
+        $license_message = '';
+
+        if (isset($_POST['wc_license_activate']) && isset($_POST['wc_license_key']) && wp_verify_nonce($_POST['_wpnonce'], 'wc_license_settings')) {
+            $license_key = sanitize_text_field($_POST['wc_license_key']);
+            $site_url = get_site_url();
+
+            // Activation request
+            $response = wp_remote_post(
+                add_query_arg(
+                    array('site_url' => $site_url),
+                    "http://interview.local/wp-json/wc-license-manager/v1/license/{$license_key}/activate"
+                ),
+                array(
+                    'timeout' => 15,
+                    'sslverify' => false,
+                )
+            );
+
+            if (is_wp_error($response)) {
+                $license_status = 'error';
+                $license_message = $response->get_error_message();
+            } else {
+                $result = json_decode(wp_remote_retrieve_body($response), true);
+
+                if (!empty($result['success']) && $result['success'] === true) {
+                    update_option('wc_product_license_key', $license_key);
+                    update_option('wc_product_license_status', 'active');
+                    $license_status = 'success';
+                    $license_message = __('License activated successfully!', 'wc-product-license');
+                } else {
+                    $license_status = 'error';
+                    $license_message = !empty($result['message']) ? $result['message'] : __('License activation failed. Please try again.', 'wc-product-license');
+                }
+            }
+        } elseif (isset($_POST['wc_license_deactivate']) && wp_verify_nonce($_POST['_wpnonce'], 'wc_license_settings')) {
+            $license_key = get_option('wc_product_license_key', '');
+            if (!empty($license_key)) {
+                $site_url = get_site_url();
+
+                // Deactivation request
+                $response = wp_remote_post(
+                    add_query_arg(
+                        array('site_url' => $site_url),
+                        "http://interview.local/wp-json/wc-license-manager/v1/license/{$license_key}/deactivate"
+                    ),
+                    array(
+                        'timeout' => 15,
+                        'sslverify' => false,
+                    )
+                );
+
+                if (is_wp_error($response)) {
+                    $license_status = 'error';
+                    $license_message = $response->get_error_message();
+                } else {
+                    $result = json_decode(wp_remote_retrieve_body($response), true);
+
+                    if (!empty($result['success']) && $result['success'] === true) {
+                        update_option('wc_product_license_status', 'inactive');
+                        $license_status = 'success';
+                        $license_message = __('License deactivated successfully!', 'wc-product-license');
+                    } else {
+                        $license_status = 'error';
+                        $license_message = !empty($result['message']) ? $result['message'] : __('License deactivation failed. Please try again.', 'wc-product-license');
+                    }
+                }
+            } else {
+                $license_status = 'error';
+                $license_message = __('No license key found to deactivate.', 'wc-product-license');
+            }
+        }
+
+        // Get current license status
+        $current_license_key = get_option('wc_product_license_key', '');
+        $current_license_status = get_option('wc_product_license_status', 'inactive');
 
         // Get current settings
         $settings = get_option('wc_product_license_settings', [
@@ -728,25 +823,68 @@ class WC_Product_License_Admin
                 'debug_mode' => 'no'
             ]
         ]);
-
     ?>
         <div class="wrap">
             <h1><?php _e('License Settings', 'wc-product-license'); ?></h1>
-
             <?php if ($settings_saved): ?>
                 <div class="notice notice-success is-dismissible">
                     <p><?php _e('Settings saved successfully.', 'wc-product-license'); ?></p>
                 </div>
             <?php endif; ?>
 
+            <?php if (!empty($license_message)): ?>
+                <div class="notice notice-<?php echo $license_status === 'success' ? 'success' : 'error'; ?> is-dismissible">
+                    <p><?php echo esc_html($license_message); ?></p>
+                </div>
+            <?php endif; ?>
+
             <form method="post" action="">
                 <?php wp_nonce_field('wc_license_settings'); ?>
-
                 <div class="wc-license-settings-tabs">
                     <div class="nav-tab-wrapper">
                         <a href="#general-settings" class="nav-tab nav-tab-active"><?php _e('General', 'wc-product-license'); ?></a>
                         <a href="#email-templates" class="nav-tab"><?php _e('Email Templates', 'wc-product-license'); ?></a>
                         <a href="#api-settings" class="nav-tab"><?php _e('API Settings', 'wc-product-license'); ?></a>
+                        <a href="#license-activation" class="nav-tab"><?php _e('License Activation', 'wc-product-license'); ?></a>
+                    </div>
+
+                    <!-- License Activation -->
+                    <div id="license-activation" class="tab-content">
+                        <div class="wc-license-activation-container">
+                            <div class="wc-license-status-box">
+                                <h2><?php _e('License Status', 'wc-product-license'); ?></h2>
+
+                                <?php if ($current_license_status === 'active'): ?>
+                                    <div class="license-status-active">
+                                        <span class="dashicons dashicons-yes"></span>
+                                        <p><?php _e('Your license is active', 'wc-product-license'); ?></p>
+                                    </div>
+                                    <p class="license-key-display">
+                                        <?php echo sprintf(__('License Key: %s', 'wc-product-license'), esc_html($current_license_key)); ?>
+                                    </p>
+                                    <p>
+                                        <input type="submit" name="wc_license_deactivate" class="button button-secondary" value="<?php _e('Deactivate License', 'wc-product-license'); ?>" />
+                                    </p>
+                                <?php else: ?>
+                                    <div class="license-status-inactive">
+                                        <span class="dashicons dashicons-warning"></span>
+                                        <p><?php _e('Your license is not active', 'wc-product-license'); ?></p>
+                                    </div>
+                                    <p class="license-info">
+                                        <?php _e('Please enter your license key below to activate the pro features.', 'wc-product-license'); ?>
+                                    </p>
+                                    <p>
+                                        <label for="wc_license_key"><?php _e('License Key', 'wc-product-license'); ?></label>
+                                        <input type="text" id="wc_license_key" name="wc_license_key" value="<?php echo esc_attr($current_license_key); ?>" class="regular-text" placeholder="<?php _e('Enter your license key', 'wc-product-license'); ?>" required />
+                                    </p>
+                                    <p>
+                                        <input type="submit" name="wc_license_activate" class="button button-primary" value="<?php _e('Activate License', 'wc-product-license'); ?>" />
+                                    </p>
+                                <?php endif; ?>
+                            </div>
+
+                            <?php $this->render_license_information(); ?>
+                        </div>
                     </div>
 
                     <!-- General Settings -->
@@ -757,8 +895,7 @@ class WC_Product_License_Admin
                                     <label for="license_key_prefix"><?php _e('License Key Prefix', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <input type="text" id="license_key_prefix" name="settings[license_key_prefix]"
-                                        value="<?php echo esc_attr($settings['license_key_prefix']); ?>" class="regular-text">
+                                    <input type="text" id="license_key_prefix" name="settings[license_key_prefix]" value="<?php echo esc_attr($settings['license_key_prefix']); ?>" class="regular-text">
                                     <p class="description"><?php _e('Optional prefix for generated license keys.', 'wc-product-license'); ?></p>
                                 </td>
                             </tr>
@@ -767,9 +904,7 @@ class WC_Product_License_Admin
                                     <label for="license_key_length"><?php _e('License Key Length', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <input type="number" id="license_key_length" name="settings[license_key_length]"
-                                        value="<?php echo esc_attr($settings['license_key_length']); ?>"
-                                        min="8" max="32" class="small-text">
+                                    <input type="number" id="license_key_length" name="settings[license_key_length]" value="<?php echo esc_attr($settings['license_key_length']); ?>" min="8" max="32" class="small-text">
                                     <p class="description"><?php _e('Length of generated license keys (excluding prefix).', 'wc-product-license'); ?></p>
                                 </td>
                             </tr>
@@ -778,9 +913,7 @@ class WC_Product_License_Admin
                                     <label for="license_renewal_discount"><?php _e('Renewal Discount (%)', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <input type="number" id="license_renewal_discount" name="settings[license_renewal_discount]"
-                                        value="<?php echo esc_attr($settings['license_renewal_discount']); ?>"
-                                        min="0" max="100" class="small-text">
+                                    <input type="number" id="license_renewal_discount" name="settings[license_renewal_discount]" value="<?php echo esc_attr($settings['license_renewal_discount']); ?>" min="0" max="100" class="small-text">
                                     <p class="description"><?php _e('Discount percentage for license renewals.', 'wc-product-license'); ?></p>
                                 </td>
                             </tr>
@@ -789,9 +922,7 @@ class WC_Product_License_Admin
                                     <label for="license_expiry_notification"><?php _e('Expiry Notification (days)', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <input type="number" id="license_expiry_notification" name="settings[license_expiry_notification]"
-                                        value="<?php echo esc_attr($settings['license_expiry_notification']); ?>"
-                                        min="1" max="90" class="small-text">
+                                    <input type="number" id="license_expiry_notification" name="settings[license_expiry_notification]" value="<?php echo esc_attr($settings['license_expiry_notification']); ?>" min="1" max="90" class="small-text">
                                     <p class="description"><?php _e('Days before expiration to send notification emails.', 'wc-product-license'); ?></p>
                                 </td>
                             </tr>
@@ -800,6 +931,7 @@ class WC_Product_License_Admin
 
                     <!-- Email Templates -->
                     <div id="email-templates" class="tab-content">
+                        <!-- Email template content remains the same -->
                         <h2><?php _e('Purchase Email', 'wc-product-license'); ?></h2>
                         <p><?php _e('Email sent to customers after purchasing a licensed product.', 'wc-product-license'); ?></p>
                         <table class="form-table">
@@ -808,8 +940,7 @@ class WC_Product_License_Admin
                                     <label for="email_purchase_subject"><?php _e('Subject', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <input type="text" id="email_purchase_subject" name="settings[email_templates][purchase][subject]"
-                                        value="<?php echo esc_attr($settings['email_templates']['purchase']['subject']); ?>" class="large-text">
+                                    <input type="text" id="email_purchase_subject" name="settings[email_templates][purchase][subject]" value="<?php echo esc_attr($settings['email_templates']['purchase']['subject']); ?>" class="large-text">
                                 </td>
                             </tr>
                             <tr>
@@ -817,15 +948,13 @@ class WC_Product_License_Admin
                                     <label for="email_purchase_content"><?php _e('Content', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <textarea id="email_purchase_content" name="settings[email_templates][purchase][content]"
-                                        rows="10" class="large-text"><?php echo esc_textarea($settings['email_templates']['purchase']['content']); ?></textarea>
+                                    <textarea id="email_purchase_content" name="settings[email_templates][purchase][content]" rows="10" class="large-text"><?php echo esc_textarea($settings['email_templates']['purchase']['content']); ?></textarea>
                                     <p class="description">
                                         <?php _e('Available variables: {customer_name}, {product_name}, {license_key}, {expiry_date}, {site_name}', 'wc-product-license'); ?>
                                     </p>
                                 </td>
                             </tr>
                         </table>
-
                         <h2><?php _e('Expiry Reminder Email', 'wc-product-license'); ?></h2>
                         <p><?php _e('Email sent to customers before their license expires.', 'wc-product-license'); ?></p>
                         <table class="form-table">
@@ -834,8 +963,7 @@ class WC_Product_License_Admin
                                     <label for="email_expiry_reminder_subject"><?php _e('Subject', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <input type="text" id="email_expiry_reminder_subject" name="settings[email_templates][expiry_reminder][subject]"
-                                        value="<?php echo esc_attr($settings['email_templates']['expiry_reminder']['subject']); ?>" class="large-text">
+                                    <input type="text" id="email_expiry_reminder_subject" name="settings[email_templates][expiry_reminder][subject]" value="<?php echo esc_attr($settings['email_templates']['expiry_reminder']['subject']); ?>" class="large-text">
                                 </td>
                             </tr>
                             <tr>
@@ -843,15 +971,13 @@ class WC_Product_License_Admin
                                     <label for="email_expiry_reminder_content"><?php _e('Content', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <textarea id="email_expiry_reminder_content" name="settings[email_templates][expiry_reminder][content]"
-                                        rows="10" class="large-text"><?php echo esc_textarea($settings['email_templates']['expiry_reminder']['content']); ?></textarea>
+                                    <textarea id="email_expiry_reminder_content" name="settings[email_templates][expiry_reminder][content]" rows="10" class="large-text"><?php echo esc_textarea($settings['email_templates']['expiry_reminder']['content']); ?></textarea>
                                     <p class="description">
                                         <?php _e('Available variables: {customer_name}, {product_name}, {license_key}, {expiry_date}, {site_name}', 'wc-product-license'); ?>
                                     </p>
                                 </td>
                             </tr>
                         </table>
-
                         <h2><?php _e('Expired License Email', 'wc-product-license'); ?></h2>
                         <p><?php _e('Email sent to customers after their license expires.', 'wc-product-license'); ?></p>
                         <table class="form-table">
@@ -860,8 +986,7 @@ class WC_Product_License_Admin
                                     <label for="email_expired_subject"><?php _e('Subject', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <input type="text" id="email_expired_subject" name="settings[email_templates][expired][subject]"
-                                        value="<?php echo esc_attr($settings['email_templates']['expired']['subject']); ?>" class="large-text">
+                                    <input type="text" id="email_expired_subject" name="settings[email_templates][expired][subject]" value="<?php echo esc_attr($settings['email_templates']['expired']['subject']); ?>" class="large-text">
                                 </td>
                             </tr>
                             <tr>
@@ -869,8 +994,7 @@ class WC_Product_License_Admin
                                     <label for="email_expired_content"><?php _e('Content', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <textarea id="email_expired_content" name="settings[email_templates][expired][content]"
-                                        rows="10" class="large-text"><?php echo esc_textarea($settings['email_templates']['expired']['content']); ?></textarea>
+                                    <textarea id="email_expired_content" name="settings[email_templates][expired][content]" rows="10" class="large-text"><?php echo esc_textarea($settings['email_templates']['expired']['content']); ?></textarea>
                                     <p class="description">
                                         <?php _e('Available variables: {customer_name}, {product_name}, {license_key}, {expiry_date}, {site_name}', 'wc-product-license'); ?>
                                     </p>
@@ -881,6 +1005,7 @@ class WC_Product_License_Admin
 
                     <!-- API Settings -->
                     <div id="api-settings" class="tab-content">
+                        <!-- API settings content remains the same -->
                         <table class="form-table">
                             <tr>
                                 <th scope="row">
@@ -888,8 +1013,7 @@ class WC_Product_License_Admin
                                 </th>
                                 <td>
                                     <label>
-                                        <input type="checkbox" id="enable_api" name="settings[api_settings][enable_api]"
-                                            value="yes" <?php checked($settings['api_settings']['enable_api'], 'yes'); ?>>
+                                        <input type="checkbox" id="enable_api" name="settings[api_settings][enable_api]" value="yes" <?php checked($settings['api_settings']['enable_api'], 'yes'); ?>>
                                         <?php _e('Enable license verification API', 'wc-product-license'); ?>
                                     </label>
                                     <p class="description"><?php _e('Allow products to verify licenses via the API.', 'wc-product-license'); ?></p>
@@ -901,8 +1025,7 @@ class WC_Product_License_Admin
                                 </th>
                                 <td>
                                     <label>
-                                        <input type="checkbox" id="require_https" name="settings[api_settings][require_https]"
-                                            value="yes" <?php checked($settings['api_settings']['require_https'], 'yes'); ?>>
+                                        <input type="checkbox" id="require_https" name="settings[api_settings][require_https]" value="yes" <?php checked($settings['api_settings']['require_https'], 'yes'); ?>>
                                         <?php _e('Require secure connections for API requests', 'wc-product-license'); ?>
                                     </label>
                                     <p class="description"><?php _e('Only allow API requests over HTTPS connections.', 'wc-product-license'); ?></p>
@@ -913,9 +1036,7 @@ class WC_Product_License_Admin
                                     <label for="throttle_limit"><?php _e('Request Limit', 'wc-product-license'); ?></label>
                                 </th>
                                 <td>
-                                    <input type="number" id="throttle_limit" name="settings[api_settings][throttle_limit]"
-                                        value="<?php echo esc_attr($settings['api_settings']['throttle_limit']); ?>"
-                                        min="1" max="100" class="small-text">
+                                    <input type="number" id="throttle_limit" name="settings[api_settings][throttle_limit]" value="<?php echo esc_attr($settings['api_settings']['throttle_limit']); ?>" min="1" max="100" class="small-text">
                                     <p class="description"><?php _e('Maximum API requests allowed per minute per IP address.', 'wc-product-license'); ?></p>
                                 </td>
                             </tr>
@@ -925,53 +1046,44 @@ class WC_Product_License_Admin
                                 </th>
                                 <td>
                                     <label>
-                                        <input type="checkbox" id="debug_mode" name="settings[api_settings][debug_mode]"
-                                            value="yes" <?php checked($settings['api_settings']['debug_mode'], 'yes'); ?>>
+                                        <input type="checkbox" id="debug_mode" name="settings[api_settings][debug_mode]" value="yes" <?php checked($settings['api_settings']['debug_mode'], 'yes'); ?>>
                                         <?php _e('Enable debug logging', 'wc-product-license'); ?>
                                     </label>
                                     <p class="description"><?php _e('Log API requests and responses for troubleshooting.', 'wc-product-license'); ?></p>
                                 </td>
                             </tr>
                         </table>
-
                         <h2><?php _e('API Documentation', 'wc-product-license'); ?></h2>
                         <div class="wc-license-api-docs">
                             <p><?php _e('Use the following endpoints to verify and manage licenses programmatically:', 'wc-product-license'); ?></p>
                             <h4><?php _e('Get License info', 'wc-product-license'); ?></h4>
                             <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}'); ?></code>
                             <p><?php _e('Parameters: license_key'); ?></p>
-                            
                             <h4><?php _e('Verify License', 'wc-product-license'); ?></h4>
                             <code>POST <?php echo site_url('wp-json/wc-license/v1/verify'); ?></code>
                             <p><?php _e('Parameters: license_key, product_id, instance, domain', 'wc-product-license'); ?></p>
-
                             <h4><?php _e('Activate License', 'wc-product-license'); ?></h4>
                             <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}/activate'); ?></code>
                             <p><?php _e('Parameters: license_key'); ?></p>
-
                             <h4><?php _e('Deactivate License', 'wc-product-license'); ?></h4>
                             <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}/deactivate'); ?></code>
                             <p><?php _e('Parameters: license_key'); ?></p>
                         </div>
                     </div>
                 </div>
-
                 <p class="submit">
                     <input type="submit" name="submit_settings" class="button button-primary" value="<?php _e('Save Settings', 'wc-product-license'); ?>">
                 </p>
             </form>
         </div>
-
         <script type="text/javascript">
             jQuery(document).ready(function($) {
                 // Tab navigation
                 $('.wc-license-settings-tabs .nav-tab').on('click', function(e) {
                     e.preventDefault();
-
                     // Update active tab
                     $('.wc-license-settings-tabs .nav-tab').removeClass('nav-tab-active');
                     $(this).addClass('nav-tab-active');
-
                     // Show active content
                     var target = $(this).attr('href');
                     $('.wc-license-settings-tabs .tab-content').removeClass('active');
@@ -1023,10 +1135,147 @@ class WC_Product_License_Admin
             .license-expired {
                 background-color: #a00;
             }
+
+            /* License Activation Tab Styles */
+            .wc-license-activation-container {
+                background: #fff;
+                border: 1px solid #e5e5e5;
+                padding: 20px;
+                margin-bottom: 20px;
+            }
+
+            .wc-license-status-box {
+                margin-bottom: 20px;
+                padding-bottom: 20px;
+                border-bottom: 1px solid #eee;
+            }
+
+            .license-status-active {
+                display: flex;
+                align-items: center;
+                color: #46b450;
+                font-weight: bold;
+            }
+
+            .license-status-inactive {
+                display: flex;
+                align-items: center;
+                color: #dc3232;
+                font-weight: bold;
+            }
+
+            .license-status-active .dashicons,
+            .license-status-inactive .dashicons {
+                font-size: 30px;
+                margin-right: 10px;
+            }
+
+            .license-key-display {
+                background: #f9f9f9;
+                padding: 10px;
+                border-left: 4px solid #46b450;
+                margin-bottom: 15px;
+            }
+
+            .wc-license-info-box {
+                background: #f9f9f9;
+                border-left: 4px solid #00a0d2;
+                padding: 15px;
+                margin-top: 20px;
+            }
         </style>
-<?php
+        <?php
     }
 
+    /**
+     * Render the license information section
+     */
+    public function render_license_information()
+    {
+        $current_license_key = get_option('wc_product_license_key', '');
+        $current_license_status = get_option('wc_product_license_status', 'inactive');
+
+        // Only fetch license information if we have an active license
+        if ($current_license_status === 'active' && !empty($current_license_key)) {
+            // Make API request to get license details
+            $response = wp_remote_get(
+                "http://interview.local/wp-json/wc-license-manager/v1/license/{$current_license_key}/",
+                array(
+                    'timeout' => 15,
+                    'sslverify' => false,
+                )
+            );
+
+            if (!is_wp_error($response)) {
+                $license_data = json_decode(wp_remote_retrieve_body($response), true);
+
+                if (!empty($license_data) && isset($license_data['success']) && $license_data['success'] === true) {
+                    // License data found, display detailed information
+        ?>
+                    <div class="wc-license-info">
+                        <h3><?php _e('License Information', 'wc-product-license'); ?></h3>
+                        <table class="widefat striped">
+                            <tr>
+                                <th><?php _e('License Key', 'wc-product-license'); ?></th>
+                                <td><?php echo esc_html($license_data['license_key']); ?></td>
+                            </tr>
+                            <tr>
+                                <th><?php _e('Status', 'wc-product-license'); ?></th>
+                                <td>
+                                    <span class="license-status license-<?php echo esc_attr($license_data['status']); ?>">
+                                        <?php echo esc_html(ucfirst($license_data['status'])); ?>
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><?php _e('Product', 'wc-product-license'); ?></th>
+                                <td><?php echo esc_html($license_data['product_name']); ?></td>
+                            </tr>
+                            <tr>
+                                <th><?php _e('Sites Allowed', 'wc-product-license'); ?></th>
+                                <td><?php echo esc_html($license_data['sites_allowed']); ?></td>
+                            </tr>
+                            <tr>
+                                <th><?php _e('Sites Active', 'wc-product-license'); ?></th>
+                                <td><?php echo esc_html($license_data['sites_active']); ?></td>
+                            </tr>
+                            <tr>
+                                <th><?php _e('Expires', 'wc-product-license'); ?></th>
+                                <td><?php echo esc_html(date_i18n(get_option('date_format'), strtotime($license_data['expires_at']))); ?></td>
+                            </tr>
+                        </table>
+                    </div>
+                <?php
+                } else {
+                    // API returned success: false or empty data
+                ?>
+                    <div class="wc-license-info-error">
+                        <p><?php _e('Could not fetch license information. Please try again or contact support.', 'wc-product-license'); ?></p>
+                    </div>
+                <?php
+                }
+            } else {
+                // API request failed
+                ?>
+                <div class="wc-license-info-error">
+                    <p><?php _e('Failed to connect to the license server. Please try again later.', 'wc-product-license'); ?></p>
+                </div>
+            <?php
+            }
+        } else {
+            // No active license found
+            ?>
+            <div class="wc-license-no-license">
+                <div class="wc-license-info-box">
+                    <h3><?php _e('No Active License', 'wc-product-license'); ?></h3>
+                    <p><?php _e('You don\'t have an active license for this plugin.', 'wc-product-license'); ?></p>
+                    <p><?php _e('Premium features are not available without a license key.', 'wc-product-license'); ?></p>
+                    <p><?php printf(__('Please <a href="%s" target="_blank">purchase a license</a> to unlock all features.', 'wc-product-license'), 'https://raihandevzone.com'); ?></p>
+                </div>
+            </div>
+<?php
+        }
+    }
     /**
      * Save settings
      */
@@ -1129,4 +1378,9 @@ class WC_Product_License_Admin
 
     //     return $license_key;
     // }
+    /**
+     * Render the admin page
+     */
+    
 }
+require_once dirname(__FILE__) . '/analytics.php';

@@ -1,4 +1,5 @@
 <?php
+
 /**
  * License List Table Class
  * 
@@ -11,12 +12,14 @@ if (!class_exists('WP_List_Table')) {
     require_once(ABSPATH . 'wp-admin/includes/class-wp-list-table.php');
 }
 
-class WC_License_List_Table extends WP_List_Table {
+class WC_License_List_Table extends WP_List_Table
+{
 
     /**
      * Constructor
      */
-    public function __construct() {
+    public function __construct()
+    {
         parent::__construct([
             'singular' => 'license',
             'plural'   => 'licenses',
@@ -27,7 +30,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Get table columns
      */
-    public function get_columns() {
+    public function get_columns()
+    {
         $columns = [
             'cb'            => '<input type="checkbox" />',
             'license_key'   => __('License Key', 'wc-product-license'),
@@ -46,7 +50,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Get sortable columns
      */
-    public function get_sortable_columns() {
+    public function get_sortable_columns()
+    {
         $sortable_columns = [
             'license_key'   => ['license_key', false],
             'product'       => ['product_id', false],
@@ -62,7 +67,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Column default
      */
-    public function column_default($item, $column_name) {
+    public function column_default($item, $column_name)
+    {
         switch ($column_name) {
             case 'license_key':
             case 'product':
@@ -80,7 +86,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Checkbox column
      */
-    public function column_cb($item) {
+    public function column_cb($item)
+    {
         return sprintf(
             '<input type="checkbox" name="licenses[]" value="%s" />',
             $item['id']
@@ -90,7 +97,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * License key column
      */
-    public function column_license_key($item) {
+    public function column_license_key($item)
+    {
         $actions = [
             'edit' => sprintf(
                 '<a href="%s">%s</a>',
@@ -102,6 +110,19 @@ class WC_License_List_Table extends WP_List_Table {
                 $item['id'],
                 __('Delete', 'wc-product-license')
             ),
+            'view' => sprintf(
+            '<a href="#" class="view-license" data-id="%d" data-key="%s" data-product="%s" data-user="%s" data-status="%s" data-expires="%s" data-sites-allowed="%d" data-sites-active="%d" data-sites ="%d">%s</a>',
+            $item['id'],
+            esc_attr($item['license_key']),
+            esc_attr(get_the_title($item['product_id'])),
+            esc_attr(get_user_by('id', $item['user_id'])->display_name),
+            esc_attr($item['status']),
+            esc_attr($item['expires_at']),
+            esc_attr($item['sites_allowed']),
+            esc_attr($item['sites_active']),
+            esc_attr($item['active_sites']),
+            __('View', 'wc-product-license')
+        ),
         ];
 
         return sprintf(
@@ -114,7 +135,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Product column
      */
-    public function column_product($item) {
+    public function column_product($item)
+    {
         $product = wc_get_product($item['product_id']);
         return $product ? esc_html($product->get_name()) : __('Unknown', 'wc-product-license');
     }
@@ -122,7 +144,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * User column
      */
-    public function column_user($item) {
+    public function column_user($item)
+    {
         $user = get_user_by('id', $item['user_id']);
         return $user ? sprintf(
             '<a href="%s">%s</a>',
@@ -134,7 +157,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Status column
      */
-    public function column_status($item) {
+    public function column_status($item)
+    {
         $status_classes = [
             'active'   => 'license-status license-active',
             'inactive' => 'license-status license-inactive',
@@ -156,7 +180,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Sites column
      */
-    public function column_sites($item) {
+    public function column_sites($item)
+    {
         return sprintf(
             '%d / %d',
             $item['sites_active'],
@@ -167,7 +192,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Expires column
      */
-    public function column_expires($item) {
+    public function column_expires($item)
+    {
         if (empty($item['expires_at']) || $item['expires_at'] === '0000-00-00 00:00:00') {
             return __('Never', 'wc-product-license');
         }
@@ -193,7 +219,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Purchased column
      */
-    public function column_purchased($item) {
+    public function column_purchased($item)
+    {
         if (empty($item['purchased_at']) || $item['purchased_at'] === '0000-00-00 00:00:00') {
             return __('N/A', 'wc-product-license');
         }
@@ -209,34 +236,40 @@ class WC_License_List_Table extends WP_List_Table {
 
         return date_i18n(get_option('date_format'), strtotime($item['purchased_at'])) . $order_link;
     }
-
     /**
-     * Actions column
+     * Render the actions column
+     *
+     * @param array $item The current item
+     * @return string The column output
      */
-    public function column_actions($item) {
-        $actions = '';
+    public function column_actions($item)
+    {
+        $actions = '<div class="license-actions">';
 
+        // Status-dependent buttons
         if ($item['status'] === 'active') {
             $actions .= sprintf(
-                '<button type="button" class="button button-small deactivate-license" data-id="%d">%s</button>',
+                '<a href="#" class="button deactivate-license" data-id="%d">%s</a>',
                 $item['id'],
                 __('Deactivate', 'wc-product-license')
             );
         } else {
             $actions .= sprintf(
-                '<button type="button" class="button button-small activate-license" data-id="%d">%s</button>',
+                '<a href="#" class="button activate-license" data-id="%d">%s</a>',
                 $item['id'],
                 __('Activate', 'wc-product-license')
             );
         }
 
+        $actions .= '</div>';
+
         return $actions;
     }
-
     /**
      * Get bulk actions
      */
-    public function get_bulk_actions() {
+    public function get_bulk_actions()
+    {
         $actions = [
             'activate'   => __('Activate', 'wc-product-license'),
             'deactivate' => __('Deactivate', 'wc-product-license'),
@@ -249,14 +282,16 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Process bulk actions
      */
-    protected function process_bulk_action() {
+    protected function process_bulk_action()
+    {
         // This is handled by the main admin class
     }
 
     /**
      * Prepare items for display
      */
-    public function prepare_items() {
+    public function prepare_items()
+    {
         global $wpdb;
         $table_name = $wpdb->prefix . 'wc_product_licenses';
 
@@ -278,7 +313,7 @@ class WC_License_List_Table extends WP_List_Table {
         // Handle search
         $search = isset($_REQUEST['s']) ? sanitize_text_field(wp_unslash($_REQUEST['s'])) : '';
         $where = '';
-        
+
         if (!empty($search)) {
             $where = $wpdb->prepare(
                 "WHERE license_key LIKE %s OR id = %d",
@@ -309,7 +344,8 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Extra table navigation
      */
-    public function extra_tablenav($which) {
+    public function extra_tablenav($which)
+    {
         if ($which === 'top') {
             // Add extra filters here if needed
         }
@@ -318,48 +354,51 @@ class WC_License_List_Table extends WP_List_Table {
     /**
      * Message to show if no licenses
      */
-    public function no_items() {
+    public function no_items()
+    {
         _e('No licenses found.', 'wc-product-license');
     }
 
     /**
      * Generate the table navigation
      */
-    protected function display_tablenav($which) {
-        ?>
+    protected function display_tablenav($which)
+    {
+?>
         <div class="tablenav <?php echo esc_attr($which); ?>">
             <?php if ($which == 'top'): ?>
                 <div class="alignleft actions bulkactions">
                     <?php $this->bulk_actions(); ?>
                 </div>
             <?php endif; ?>
-            
+
             <?php $this->extra_tablenav($which); ?>
             <?php $this->pagination($which); ?>
             <br class="clear" />
         </div>
-        <?php
+<?php
     }
 
     /**
      * Generate license key
      */
-    private function generate_license_key() {
+    private function generate_license_key()
+    {
         $length = 16;
         $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
         $characters_length = strlen($characters);
         $license_key = '';
-        
+
         for ($i = 0; $i < $length; $i++) {
             $license_key .= $characters[rand(0, $characters_length - 1)];
         }
-        
+
         // Add dashes for readability
-        $license_key = substr($license_key, 0, 4) . '-' . 
-                      substr($license_key, 4, 4) . '-' . 
-                      substr($license_key, 8, 4) . '-' . 
-                      substr($license_key, 12, 4);
-        
+        $license_key = substr($license_key, 0, 4) . '-' .
+            substr($license_key, 4, 4) . '-' .
+            substr($license_key, 8, 4) . '-' .
+            substr($license_key, 12, 4);
+
         return $license_key;
     }
 }

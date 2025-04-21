@@ -51,6 +51,7 @@ class WC_Product_License_Manager
 
         // // Register REST API endpoints
         add_action('rest_api_init', [$this, 'register_rest_api_endpoints']);
+        add_action('rest_api_init', [$this, 'register_tracking_api_endpoints']);
 
         // // AJAX handlers for activation/deactivation
         add_action('wp_ajax_activate_license', [$this, 'ajax_activate_license']);
@@ -858,6 +859,25 @@ class WC_Product_License_Manager
         ]);
     }
 
+
+    /**
+     * Register activation/deactivation tracking REST API endpoints
+     */
+    public function register_tracking_api_endpoints()
+    {
+        register_rest_route('wc-license-manager/v1', '/tracking/activate', [
+            'methods' => 'POST',
+            'callback' => [$this, 'track_activation'],
+            'permission_callback' => [$this, 'verify_license_api_permission']
+        ]);
+
+        register_rest_route('wc-license-manager/v1', '/tracking/deactivate', [
+            'methods' => 'POST',
+            'callback' => [$this, 'track_deactivation'],
+            'permission_callback' => [$this, 'verify_license_api_permission']
+        ]);
+    }
+
     /**
      * Verify API permission
      */
@@ -986,6 +1006,102 @@ class WC_Product_License_Manager
         wp_send_json_success([
             'message' => __('License successfully deactivated for this site.', 'wc-product-license'),
             'active_sites' => $active_sites
+        ]);
+    }
+
+
+    /**
+     * Track site activation data
+     */
+    public function track_activation($request)
+    {
+        $params = $request->get_params();
+
+        // Required fields
+        $site_url = isset($params['site_url']) ? esc_url_raw($params['site_url']) : '';
+        $activation_status = isset($params['activation_status']) ? sanitize_text_field($params['activation_status']) : 'yes';
+        $is_multisite = isset($params['multisite']) ? sanitize_text_field($params['multisite']) : 'no';
+        $wp_version = isset($params['wordpress_version']) ? sanitize_text_field($params['wordpress_version']) : '';
+        $php_version = isset($params['php_version']) ? sanitize_text_field($params['php_version']) : '';
+        $server_software = isset($params['server_software']) ? sanitize_text_field($params['server_software']) : '';
+        $mysql_version = isset($params['mysql_version']) ? sanitize_text_field($params['mysql_version']) : '';
+
+        // Validate required fields
+        if (empty($site_url) || $activation_status !== 'yes') {
+            return new WP_Error('missing_fields', __('Required fields are missing.', 'wc-product-license'), ['status' => 400]);
+        }
+
+        // Store activation data
+        $tracking_data = [
+            'site_url' => $site_url,
+            'activation_status' => $activation_status,
+            'multisite' => $is_multisite,
+            'wordpress_version' => $wp_version,
+            'php_version' => $php_version,
+            'server_software' => $server_software,
+            'mysql_version' => $mysql_version,
+            'timestamp' => current_time('mysql')
+        ];
+
+        // Get existing tracking data
+        $existing_data = get_option('wc_license_activation_tracking', []);
+
+        // Add or update site data
+        $existing_data[$site_url] = $tracking_data;
+
+        // Save updated tracking data
+        update_option('wc_license_activation_tracking', $existing_data);
+
+        return rest_ensure_response([
+            'success' => true,
+            'message' => __('Activation data recorded successfully.', 'wc-product-license')
+        ]);
+    }
+
+    /**
+     * Track site deactivation data
+     */
+    public function track_deactivation($request)
+    {
+        $params = $request->get_params();
+
+        // Required fields
+        $site_url = isset($params['site_url']) ? esc_url_raw($params['site_url']) : '';
+        $activation_status = isset($params['activation_status']) ? sanitize_text_field($params['activation_status']) : 'no';
+        $deactivation_reason = isset($params['deactivation_reason']) ? sanitize_text_field($params['deactivation_reason']) : 'without reason';
+
+        // Validate required fields
+        if (empty($site_url) || $activation_status !== 'no' || empty($deactivation_reason)) {
+            return new WP_Error('missing_fields', __('Required fields are missing.', 'wc-product-license'), ['status' => 400]);
+        }
+
+        // Store deactivation data
+        $deactivation_data = [
+            'site_url' => $site_url,
+            'activation_status' => $activation_status,
+            'deactivation_reason' => $deactivation_reason,
+            'timestamp' => current_time('mysql')
+        ];
+
+        // Get existing deactivation data
+        $existing_data = get_option('wc_license_deactivation_tracking', []);
+
+        // Add deactivation record
+        $existing_data[] = $deactivation_data;
+
+        // Save updated tracking data
+        update_option('wc_license_deactivation_tracking', $existing_data);
+
+        // Also update the activation tracking to reflect deactivation
+        $activation_data = get_option('wc_license_activation_tracking', []);
+        if (isset($activation_data[$site_url])) {
+            unset($activation_data[$site_url]);
+            update_option('wc_license_activation_tracking', $activation_data);
+        }
+
+        return rest_ensure_response([
+            'success' => true,
+            'message' => __('Deactivation data recorded successfully.', 'wc-product-license')
         ]);
     }
 

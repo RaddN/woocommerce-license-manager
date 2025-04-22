@@ -26,14 +26,15 @@ if (!in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get
 
 register_activation_hook(__FILE__, 'your_plugin_activation_function');
 
-function your_plugin_activation_function() {
+function your_plugin_activation_function()
+{
     global $wpdb;
 
     $table_name = $wpdb->prefix . 'wc_product_licenses';
 
-        $charset_collate = $wpdb->get_charset_collate();
+    $charset_collate = $wpdb->get_charset_collate();
 
-        $sql = "CREATE TABLE $table_name (
+    $sql = "CREATE TABLE $table_name (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             license_key varchar(255) NOT NULL,
             product_id bigint(20) NOT NULL,
@@ -50,15 +51,15 @@ function your_plugin_activation_function() {
             UNIQUE KEY license_key (license_key)
         ) $charset_collate;";
 
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        dbDelta($sql);
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    dbDelta($sql);
 }
 class WC_Product_License_Manager
 {
 
     public function __construct()
     {
-        
+
         // Product editing metabox
         add_action('woocommerce_product_options_general_product_data', [$this, 'add_license_option_to_products']);
         add_action('woocommerce_process_product_meta', [$this, 'save_license_product_option']);
@@ -120,6 +121,7 @@ class WC_Product_License_Manager
         // Add upgrade processing
         add_action('woocommerce_add_to_cart', [$this, 'process_license_upgrade'], 10, 6);
     }
+
 
     /**
      * Add license checkbox to product general options
@@ -1034,6 +1036,7 @@ class WC_Product_License_Manager
 
         // Required fields
         $site_url = isset($params['site_url']) ? esc_url_raw($params['site_url']) : '';
+        $product_name = isset($params['product_name']) ? sanitize_text_field($params['product_name']) : '';
         $activation_status = isset($params['activation_status']) ? sanitize_text_field($params['activation_status']) : 'yes';
         $is_multisite = isset($params['multisite']) ? sanitize_text_field($params['multisite']) : 'no';
         $wp_version = isset($params['wordpress_version']) ? sanitize_text_field($params['wordpress_version']) : '';
@@ -1049,6 +1052,7 @@ class WC_Product_License_Manager
         // Store activation data
         $tracking_data = [
             'site_url' => $site_url,
+            'product_name' => $product_name,
             'activation_status' => $activation_status,
             'multisite' => $is_multisite,
             'wordpress_version' => $wp_version,
@@ -1082,6 +1086,7 @@ class WC_Product_License_Manager
 
         // Required fields
         $site_url = isset($params['site_url']) ? esc_url_raw($params['site_url']) : '';
+        $product_name = isset($params['product_name']) ? sanitize_text_field($params['product_name']) : '';
         $activation_status = isset($params['activation_status']) ? sanitize_text_field($params['activation_status']) : 'no';
         $deactivation_reason = isset($params['deactivation_reason']) ? sanitize_text_field($params['deactivation_reason']) : 'without reason';
 
@@ -1093,6 +1098,7 @@ class WC_Product_License_Manager
         // Store deactivation data
         $deactivation_data = [
             'site_url' => $site_url,
+            'product_name' => $product_name,
             'activation_status' => $activation_status,
             'deactivation_reason' => $deactivation_reason,
             'timestamp' => current_time('mysql')
@@ -1102,7 +1108,7 @@ class WC_Product_License_Manager
         $existing_data = get_option('wc_license_deactivation_tracking', []);
 
         // Add deactivation record
-        $existing_data[] = $deactivation_data;
+        $existing_data[$site_url] = $deactivation_data;
 
         // Save updated tracking data
         update_option('wc_license_deactivation_tracking', $existing_data);
@@ -1280,10 +1286,19 @@ class WC_Product_License_Manager
      */
     public function add_cart_item_data($cart_item_data, $product_id, $variation_id)
     {
+        // Check for POST data (standard product form)
         if (isset($_POST['license_variation']) && get_post_meta($product_id, '_is_license_product', true) === 'yes') {
             $license_variations = get_post_meta($product_id, '_license_variations', true);
             $selected_variation_index = absint($_POST['license_variation']);
+            if (isset($license_variations[$selected_variation_index])) {
+                $cart_item_data['license_variation'] = $license_variations[$selected_variation_index];
+            }
+        }
 
+        // Check for GET data (from shortcode or direct links)
+        elseif (isset($_GET['license_variation']) && get_post_meta($product_id, '_is_license_product', true) === 'yes') {
+            $license_variations = get_post_meta($product_id, '_license_variations', true);
+            $selected_variation_index = absint($_GET['license_variation']);
             if (isset($license_variations[$selected_variation_index])) {
                 $cart_item_data['license_variation'] = $license_variations[$selected_variation_index];
             }
@@ -1462,6 +1477,7 @@ require_once plugin_dir_path(__FILE__) . 'include/admin.php';
 
 function product_license_init()
 {
+    send_tracking_info();
     new WC_Product_License_Manager();
     new WC_Product_License_Admin();
 }
@@ -1477,3 +1493,687 @@ function wc_product_license_activate()
     // Set a flag to flush rewrite rules
     update_option('wc_license_manager_flush_rewrite_rules', true);
 }
+
+
+function send_tracking_info()
+{
+    // Gather the necessary information
+    $site_url = str_replace('http://', '', get_site_url());
+    $plugin_name = 'Your Plugin Name'; // Replace with your actual plugin name
+    $is_multisite = is_multisite() ? 'yes' : 'no';
+    $wp_version = get_bloginfo('version');
+    $php_version = phpversion();
+    $server_software = $_SERVER['SERVER_SOFTWARE'];
+    $mysql_version = $GLOBALS['wpdb']->db_version();
+
+    // Prepare the data to send
+    $data = array(
+        'site_url' => $site_url,
+        'product_name' => $plugin_name,
+        'multisite' => $is_multisite,
+        'wordpress_version' => $wp_version,
+        'php_version' => $php_version,
+        'server_software' => $server_software,
+        'mysql_version' => $mysql_version,
+    );
+
+    // Send the data via HTTP POST
+    $response = wp_remote_post('https://wppluginzone.com/wp-json/wc-license-manager/v1/tracking/activate', array(
+        'body' => $data,
+        'method' => 'POST',
+        'timeout' => 30,
+    ));
+
+    // Optional: Check for errors
+    if (is_wp_error($response)) {
+        error_log('Tracking info send error: ' . $response->get_error_message());
+    } else {
+        error_log('Tracking info sent successfully.');
+    }
+}
+
+require_once plugin_dir_path(__FILE__) . 'uninstall.php';
+
+// Initialize the feedback system
+function initialize_deactivation_feedback()
+{
+    new Plugin_Deactivation_Feedback('WooCommerce Product License Manager', 'woocommerce-license-manager/woocommerce-license-manager.php');
+}
+add_action('plugins_loaded', 'initialize_deactivation_feedback');
+
+
+
+
+/**
+ * Shortcode to display license pricing and checkout buttons
+ * 
+ * [wclicence_price product="152" template="" variation="free"]
+ * 
+ * @param array $atts Shortcode attributes
+ * @return string Shortcode output
+ */
+function wc_license_price_shortcode($atts)
+{
+    // Extract shortcode attributes
+    $atts = shortcode_atts(array(
+        'product' => 0,
+        'template' => '',
+        'variation' => '',
+        'button_text' => __('Buy Now', 'wc-product-license'),
+    ), $atts, 'wclicence_price');
+
+    $product_id = absint($atts['product']);
+    $template = sanitize_text_field($atts['template']);
+    $variation = sanitize_text_field($atts['variation']);
+    $button_text = sanitize_text_field($atts['button_text']);
+
+    // Check if product exists and is valid
+    $product = wc_get_product($product_id);
+    if (!$product || get_post_meta($product_id, '_is_license_product', true) !== 'yes') {
+        return '<p class="wc-license-error">' . __('Invalid product or not a license product.', 'wc-product-license') . '</p>';
+    }
+
+    // Get license variations
+    $license_variations = get_post_meta($product_id, '_license_variations', true);
+    if (empty($license_variations)) {
+        return '<p class="wc-license-error">' . __('No license variations found for this product.', 'wc-product-license') . '</p>';
+    }
+
+    // Start output buffer
+    ob_start();
+
+    // Enqueue necessary scripts for functionality
+    wp_enqueue_style('wc-license-shortcode-style', plugin_dir_url(__FILE__) . 'assets/css/shortcode.css');
+    wp_enqueue_script('wc-license-shortcode-script', plugin_dir_url(__FILE__) . 'assets/js/shortcode.js', array('jquery'), '1.0.0', true);
+
+    // If variation is specified, show direct checkout button
+    if (!empty($variation)) {
+        // Find the variation with the specified title
+        $variation_index = null;
+        foreach ($license_variations as $index => $var) {
+            if (strtolower($var['title']) === strtolower($variation)) {
+                $variation_index = $index;
+                break;
+            }
+        }
+
+        if ($variation_index !== null) {
+            $license_var = $license_variations[$variation_index];
+            $checkout_url = add_query_arg(array(
+                'add-to-cart' => $product_id,
+                'license_variation' => $variation_index,
+            ), wc_get_cart_url());
+
+            echo '<div class="wc-license-direct-checkout">';
+            echo '<h3>' . esc_html($product->get_name()) . ' - ' . esc_html($license_var['title']) . '</h3>';
+            echo '<div class="wc-license-price">' . wc_price($license_var['price']) . '</div>';
+            echo '<div class="wc-license-features">';
+            echo '<span class="wc-license-sites">' . sprintf(__('%d sites', 'wc-product-license'), $license_var['sites']) . '</span>';
+            echo '<span class="wc-license-validity">' . sprintf(__('%d days', 'wc-product-license'), $license_var['validity']) . '</span>';
+            echo '</div>';
+            echo '<a href="' . esc_url($checkout_url) . '" class="wc-license-checkout-button">' . $button_text . '</a>';
+            echo '</div>';
+        } else {
+            echo '<p class="wc-license-error">' . __('Specified variation not found.', 'wc-product-license') . '</p>';
+        }
+    } else {
+        // Show all variations based on template
+        echo '<div class="wc-license-pricing-table ' . ($template ? 'template-' . esc_attr($template) : 'template-default') . '">';
+
+        switch ($template) {
+            case 'cards':
+                // Cards template
+                echo '<div class="wc-license-cards">';
+                foreach ($license_variations as $index => $var) {
+                    $checkout_url = add_query_arg(array(
+                        'add-to-cart' => $product_id,
+                        'license_variation' => $index,
+                    ), wc_get_cart_url());
+
+                    echo '<div class="wc-license-card">';
+                    echo '<div class="wc-license-card-header">' . esc_html($var['title']) . '</div>';
+                    echo '<div class="wc-license-card-price">' . wc_price($var['price']) . '</div>';
+                    echo '<div class="wc-license-card-features">';
+                    echo '<div class="wc-license-feature"><span class="dashicons dashicons-yes"></span> ' . sprintf(__('%d sites', 'wc-product-license'), $var['sites']) . '</div>';
+                    echo '<div class="wc-license-feature"><span class="dashicons dashicons-calendar-alt"></span> ' . sprintf(__('%d days', 'wc-product-license'), $var['validity']) . '</div>';
+                    echo '</div>';
+                    echo '<a href="' . esc_url($checkout_url) . '" class="wc-license-card-button">' . $button_text . '</a>';
+                    echo '</div>';
+                }
+                echo '</div>';
+                break;
+
+            case 'table':
+                // Table template
+                echo '<table class="wc-license-table">';
+                echo '<thead><tr>';
+                echo '<th>' . __('License', 'wc-product-license') . '</th>';
+                echo '<th>' . __('Sites', 'wc-product-license') . '</th>';
+                echo '<th>' . __('Validity', 'wc-product-license') . '</th>';
+                echo '<th>' . __('Price', 'wc-product-license') . '</th>';
+                echo '<th></th>';
+                echo '</tr></thead>';
+                echo '<tbody>';
+                foreach ($license_variations as $index => $var) {
+                    $checkout_url = add_query_arg(array(
+                        'add-to-cart' => $product_id,
+                        'license_variation' => $index,
+                    ), wc_get_cart_url());
+
+                    echo '<tr>';
+                    echo '<td>' . esc_html($var['title']) . '</td>';
+                    echo '<td>' . esc_html($var['sites']) . '</td>';
+                    echo '<td>' . sprintf(__('%d days', 'wc-product-license'), $var['validity']) . '</td>';
+                    echo '<td>' . wc_price($var['price']) . '</td>';
+                    echo '<td><a href="' . esc_url($checkout_url) . '" class="wc-license-table-button">' . $button_text . '</a></td>';
+                    echo '</tr>';
+                }
+                echo '</tbody></table>';
+                break;
+
+            case 'toggle':
+                // Toggle selector
+                echo '<div class="wc-license-toggle">';
+                echo '<div class="wc-license-toggle-selector">';
+                foreach ($license_variations as $index => $var) {
+                    echo '<div class="wc-license-toggle-option" data-index="' . esc_attr($index) . '">' . esc_html($var['title']) . '</div>';
+                }
+                echo '</div>';
+
+                echo '<div class="wc-license-toggle-content">';
+                foreach ($license_variations as $index => $var) {
+                    $checkout_url = add_query_arg(array(
+                        'add-to-cart' => $product_id,
+                        'license_variation' => $index,
+                    ), wc_get_cart_url());
+
+                    echo '<div class="wc-license-toggle-panel" data-index="' . esc_attr($index) . '"' . ($index === array_key_first($license_variations) ? ' style="display:block"' : '') . '>';
+                    echo '<div class="wc-license-toggle-price">' . wc_price($var['price']) . '</div>';
+                    echo '<div class="wc-license-toggle-details">';
+                    echo '<div class="wc-license-toggle-sites">' . sprintf(__('%d sites', 'wc-product-license'), $var['sites']) . '</div>';
+                    echo '<div class="wc-license-toggle-validity">' . sprintf(__('%d days license', 'wc-product-license'), $var['validity']) . '</div>';
+                    echo '</div>';
+                    echo '<a href="' . esc_url($checkout_url) . '" class="wc-license-toggle-button">' . $button_text . '</a>';
+                    echo '</div>';
+                }
+                echo '</div>'; // .wc-license-toggle-content
+                echo '</div>'; // .wc-license-toggle
+
+                // Add toggle JavaScript
+                echo '<script>
+                    jQuery(document).ready(function($) {
+                        $(".wc-license-toggle-option").on("click", function() {
+                            var index = $(this).data("index");
+                            $(".wc-license-toggle-option").removeClass("active");
+                            $(this).addClass("active");
+                            $(".wc-license-toggle-panel").hide();
+                            $(".wc-license-toggle-panel[data-index=" + index + "]").show();
+                        });
+                        $(".wc-license-toggle-option:first").addClass("active");
+                    });
+                </script>';
+                break;
+
+            case 'checklist':
+                // Checklist template
+                echo '<div class="wc-license-checklist">';
+                echo '<form class="wc-license-checklist-form" data-product-id="' . esc_attr($product_id) . '">';
+                foreach ($license_variations as $index => $var) {
+                    $isFirst = ($index === array_key_first($license_variations));
+                    echo '<div class="wc-license-checklist-item' . ($isFirst ? ' active' : '') . '" data-index="' . esc_attr($index) . '">';
+                    echo '<div class="wc-license-checkbox">';
+                    echo '<input type="radio" id="license-option-' . esc_attr($index) . '" name="license_variation" value="' . esc_attr($index) . '"' . ($isFirst ? ' checked' : '') . '>';
+                    echo '<label for="license-option-' . esc_attr($index) . '"></label>';
+                    echo '</div>';
+
+                    echo '<div class="wc-license-checklist-content">';
+                    echo '<div class="wc-license-checklist-header">';
+                    echo '<span class="wc-license-checklist-title">' . esc_html($var['title']) . '</span>';
+                    echo '<span class="wc-license-checklist-price">' . wc_price($var['price']) . '</span>';
+                    echo '</div>';
+
+                    echo '<div class="wc-license-checklist-details">';
+                    echo '<span class="wc-license-sites-badge">' . sprintf(__('%d sites allowed', 'wc-product-license'), $var['sites']) . '</span>';
+                    echo '<span class="wc-license-validity-badge">' . sprintf(__('%d days validity', 'wc-product-license'), $var['validity']) . '</span>';
+                    echo '</div>';
+                    echo '</div>'; // .wc-license-checklist-content
+                    echo '</div>'; // .wc-license-checklist-item
+                }
+
+                echo '<div class="wc-license-checklist-actions">';
+                echo '<button type="submit" class="wc-license-checklist-button">' . $button_text . '</button>';
+                echo '</div>';
+                echo '</form>';
+
+                // Add JavaScript for checklist interactions
+                echo '<script>
+                    jQuery(document).ready(function($) {
+                        $(".wc-license-checklist-item").on("click", function() {
+                            var index = $(this).data("index");
+                            $(".wc-license-checklist-item").removeClass("active");
+                            $(this).addClass("active");
+                            $("#license-option-" + index).prop("checked", true);
+                        });
+                        
+                        $(".wc-license-checklist-form").on("submit", function(e) {
+                            e.preventDefault();
+                            var productId = $(this).data("product-id");
+                            var variation = $("input[name=license_variation]:checked").val();
+                            window.location.href = "' . esc_url(wc_get_cart_url()) . '?add-to-cart=" + productId + "&license_variation=" + variation;
+                        });
+                    });
+                    </script>';
+                echo '</div>'; // .wc-license-checklist
+                break;
+
+            default:
+                // Default template - simple radio buttons
+                echo '<div class="wc-license-default">';
+                echo '<h3>' . esc_html($product->get_name()) . ' ' . __('License Options', 'wc-product-license') . '</h3>';
+                echo '<form class="wc-license-form" data-product-id="' . esc_attr($product_id) . '">';
+
+                foreach ($license_variations as $index => $var) {
+                    echo '<div class="wc-license-option">';
+                    echo '<label>';
+                    echo '<input type="radio" name="license_variation" value="' . esc_attr($index) . '" ' . ($index === array_key_first($license_variations) ? 'checked' : '') . '>';
+                    echo '<span class="wc-license-option-title">' . esc_html($var['title']) . '</span>';
+                    echo '<span class="wc-license-option-price">' . wc_price($var['price']) . '</span>';
+                    echo '<span class="wc-license-option-details">' . sprintf(__('%d sites, %d days', 'wc-product-license'), $var['sites'], $var['validity']) . '</span>';
+                    echo '</label>';
+                    echo '</div>';
+                }
+
+                echo '<button type="submit" class="wc-license-submit">' . __('Checkout', 'wc-product-license') . '</button>';
+                echo '</form>';
+
+                // Add JavaScript for form submission
+                echo '<script>
+                    jQuery(document).ready(function($) {
+                        $(".wc-license-form").on("submit", function(e) {
+                            e.preventDefault();
+                            var productId = $(this).data("product-id");
+                            var variation = $("input[name=license_variation]:checked").val();
+                            
+                            window.location.href = "' . esc_url(wc_get_checkout_url()) . '?add-to-cart=" + productId + "&license_variation=" + variation;
+                        });
+                    });
+                </script>';
+                echo '</div>'; // .wc-license-default
+                break;
+        }
+
+        echo '</div>'; // .wc-license-pricing-table
+    }
+
+    // Return the output
+    return ob_get_clean();
+}
+
+// Register shortcode
+add_shortcode('wclicence_price', 'wc_license_price_shortcode');
+
+/**
+ * Add CSS to customize shortcode appearance
+ */
+function wc_license_shortcode_styles()
+{
+?>
+    <style>
+        /* Base styles for all templates */
+        .wc-license-pricing-table {
+            margin: 20px 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+        }
+
+        .wc-license-checkout-button,
+        .wc-license-card-button,
+        .wc-license-table-button,
+        .wc-license-toggle-button,
+        .wc-license-submit {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #0073aa;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: 600;
+            text-align: center;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .wc-license-checkout-button:hover,
+        .wc-license-card-button:hover,
+        .wc-license-table-button:hover,
+        .wc-license-toggle-button:hover,
+        .wc-license-submit:hover {
+            background-color: #006291;
+        }
+
+        /* Direct checkout style */
+        .wc-license-direct-checkout {
+            text-align: center;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-width: 300px;
+            margin: 0 auto;
+        }
+
+        .wc-license-price {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 15px 0;
+        }
+
+        .wc-license-features {
+            margin-bottom: 20px;
+        }
+
+        .wc-license-sites,
+        .wc-license-validity {
+            display: block;
+            margin: 5px 0;
+        }
+
+        /* Cards template */
+        .wc-license-cards {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+        }
+
+        .wc-license-card {
+            width: 250px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .wc-license-card-header {
+            background-color: #f5f5f5;
+            padding: 15px 10px;
+            font-size: 18px;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .wc-license-card-price {
+            font-size: 24px;
+            text-align: center;
+            padding: 20px 10px;
+            font-weight: bold;
+        }
+
+        .wc-license-card-features {
+            padding: 0 20px 20px;
+        }
+
+        .wc-license-feature {
+            margin: 10px 0;
+        }
+
+        .wc-license-card-button {
+            display: block;
+            margin: 0 20px 20px;
+        }
+
+        /* Table template */
+        .wc-license-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        .wc-license-table th,
+        .wc-license-table td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .wc-license-table th {
+            background-color: #f5f5f5;
+        }
+
+        /* Toggle template */
+        .wc-license-toggle {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .wc-license-toggle-selector {
+            display: flex;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 20px;
+        }
+
+        .wc-license-toggle-option {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            border-bottom: none;
+            margin-bottom: -1px;
+        }
+
+        .wc-license-toggle-option.active {
+            border-color: #ddd;
+            border-bottom-color: white;
+            background-color: white;
+            font-weight: bold;
+        }
+
+        .wc-license-toggle-panel {
+            display: none;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .wc-license-toggle-price {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+
+        .wc-license-toggle-details {
+            margin-bottom: 30px;
+        }
+
+        /* Default template */
+        .wc-license-option {
+            border: 1px solid #ddd;
+            margin-bottom: 10px;
+            padding: 15px;
+            border-radius: 4px;
+        }
+
+        .wc-license-option label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .wc-license-option input[type="radio"] {
+            margin-right: 15px;
+        }
+
+        .wc-license-option-title {
+            font-weight: bold;
+            flex: 1;
+        }
+
+        .wc-license-option-price {
+            font-weight: bold;
+            font-size: 18px;
+            margin-right: 15px;
+        }
+
+        .wc-license-option-details {
+            color: #777;
+            font-size: 14px;
+        }
+
+        .wc-license-submit {
+            margin-top: 15px;
+            width: 100%;
+        }
+
+        /* Error messages */
+        .wc-license-error {
+            color: #d63638;
+            padding: 10px;
+            border-left: 4px solid #d63638;
+            background-color: #fcf0f1;
+        }
+
+        /* Checklist template */
+        .wc-license-checklist {
+            max-width: 700px;
+            margin: 0 auto;
+            font-size: 16px;
+        }
+
+        .wc-license-checklist h3 {
+            margin-bottom: 25px;
+            text-align: center;
+            font-size: 24px;
+        }
+
+        .wc-license-checklist-item {
+            display: flex;
+            align-items: center;
+            border: 2px solid #eaeaea;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .wc-license-checklist-item:hover {
+            border-color: #c3c3c3;
+            background-color: #fafafa;
+        }
+
+        .wc-license-checklist-item.active {
+            border-color: #0073aa;
+            background-color: #f0f7fb;
+        }
+
+        .wc-license-checkbox {
+            margin-right: 20px;
+            position: relative;
+        }
+
+        .wc-license-checkbox input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .wc-license-checkbox label {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 2px solid #aaa;
+            border-radius: 50%;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .wc-license-checklist-item:hover .wc-license-checkbox label {
+            border-color: #666;
+        }
+
+        .wc-license-checklist-item.active .wc-license-checkbox label {
+            border-color: #0073aa;
+            background-color: #fff;
+        }
+
+        .wc-license-checklist-item.active .wc-license-checkbox label:after {
+            content: "";
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background-color: #0073aa;
+            border-radius: 50%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .wc-license-checklist-content {
+            flex: 1;
+        }
+
+        .wc-license-checklist-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .wc-license-checklist-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .wc-license-checklist-price {
+            font-size: 20px;
+            font-weight: 700;
+            color: #0073aa;
+        }
+
+        .wc-license-checklist-details {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .wc-license-sites-badge,
+        .wc-license-validity-badge {
+            display: inline-block;
+            background-color: #e9f5fb;
+            color: #0073aa;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .wc-license-validity-badge {
+            background-color: #f0f7e6;
+            color: #5c8b2e;
+        }
+
+        .wc-license-checklist-actions {
+            margin-top: 25px;
+            text-align: center;
+        }
+
+        .wc-license-checklist-button {
+            display: inline-block;
+            padding: 12px 30px;
+            background-color: #0073aa;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .wc-license-checklist-button:hover {
+            background-color: #005d8c;
+        }
+    </style>
+<?php
+}
+add_action('wp_head', 'wc_license_shortcode_styles');

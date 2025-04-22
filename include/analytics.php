@@ -121,6 +121,7 @@ class WC_License_Analytics
                         <thead>
                             <tr>
                                 <th><?php _e('Site URL', 'wc-product-license'); ?></th>
+                                <th><?php _e('Product', 'wc-product-license'); ?></th>
                                 <th><?php _e('Reason', 'wc-product-license'); ?></th>
                                 <th><?php _e('Date', 'wc-product-license'); ?></th>
                             </tr>
@@ -138,7 +139,8 @@ class WC_License_Analytics
                             foreach ($latest_reasons as $data):
                             ?>
                                 <tr>
-                                    <td><?php echo esc_html($data['site_url']); ?></td>
+                                    <td><a href="<?php echo esc_html($data['site_url']); ?>" target="_blank"><?php echo esc_html($data['site_url']); ?></a></td>
+                                    <td><?php echo esc_html($data['product_name']??""); ?></td>
                                     <td><?php echo esc_html($data['deactivation_reason']); ?></td>
                                     <td><?php echo esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($data['timestamp']))); ?></td>
                                 </tr>

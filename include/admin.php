@@ -1060,17 +1060,20 @@ class WC_Product_License_Admin
                         <div class="wc-license-api-docs">
                             <p><?php _e('Use the following endpoints to verify and manage licenses programmatically:', 'wc-product-license'); ?></p>
                             <h4><?php _e('Get License info', 'wc-product-license'); ?></h4>
-                            <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}'); ?></code>
+                            <code>GET <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}'); ?></code>
                             <p><?php _e('Parameters: license_key'); ?></p>
-                            <h4><?php _e('Verify License', 'wc-product-license'); ?></h4>
-                            <code>POST <?php echo site_url('wp-json/wc-license/v1/verify'); ?></code>
-                            <p><?php _e('Parameters: license_key, product_id, instance, domain', 'wc-product-license'); ?></p>
                             <h4><?php _e('Activate License', 'wc-product-license'); ?></h4>
                             <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}/activate'); ?></code>
-                            <p><?php _e('Parameters: license_key'); ?></p>
+                            <p><?php _e('Parameters: license_key, site_url'); ?></p>
                             <h4><?php _e('Deactivate License', 'wc-product-license'); ?></h4>
                             <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/license/{key}/deactivate'); ?></code>
-                            <p><?php _e('Parameters: license_key'); ?></p>
+                            <p><?php _e('Parameters: license_key, site_url'); ?></p>
+                            <h4><?php _e('Store User info & Activity', 'wc-product-license'); ?></h4>
+                            <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/tracking/activate'); ?></code>
+                            <p><?php _e('Parameters: site_url, product_name, activation_status, multisite, wordpress_version, php_version, server_software, mysql_version'); ?></p>
+                            <h4><?php _e('Store Feed back on uninstall/remove', 'wc-product-license'); ?></h4>
+                            <code>POST <?php echo site_url('/wp-json/wc-license-manager/v1/tracking/deactivate'); ?></code>
+                            <p><?php _e('Parameters: site_url, product_name, activation_status, deactivation_reason'); ?></p>
                         </div>
                     </div>
                 </div>

@@ -97,44 +97,44 @@ class WC_Product_License_Admin
         ];
 
         // if (in_array($hook, $admin_hooks)) {
-            wp_enqueue_style(
-                'wc-license-admin-styles',
-                plugin_dir_url(dirname(__FILE__)) . 'assets/css/admin.css',
-                [],
-                '1.0.0'
-            );
+        wp_enqueue_style(
+            'wc-license-admin-styles',
+            plugin_dir_url(dirname(__FILE__)) . 'assets/css/admin.css',
+            [],
+            '1.0.0'
+        );
 
-            wp_enqueue_script(
-                'wc-license-admin-scripts',
-                plugin_dir_url(dirname(__FILE__)) . 'assets/js/admin.js',
-                ['jquery'],
-                '1.0.0',
-                true
-            );
+        wp_enqueue_script(
+            'wc-license-admin-scripts',
+            plugin_dir_url(dirname(__FILE__)) . 'assets/js/admin.js',
+            ['jquery'],
+            '1.0.0',
+            true
+        );
 
-            wp_localize_script('wc-license-admin-scripts', 'wcLicenseAdmin', [
-                'ajaxUrl' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('wc-license-admin-nonce'),
-                'i18n' => [
-                    'confirmDelete' => __('Are you sure you want to delete this license?', 'wc-product-license'),
-                    'confirmDeactivate' => __('Are you sure you want to deactivate this license?', 'wc-product-license'),
-                    'confirmActivate' => __('Are you sure you want to activate this license?', 'wc-product-license'),
-                    'processing' => __('Processing...', 'wc-product-license'),
-                    'success' => __('Success!', 'wc-product-license'),
-                    'error' => __('Error:', 'wc-product-license'),
-                    'serverError' => __('Server error occurred. Please try again.', 'wc-product-license'),
-                    'licenseDetails' => __('License Details', 'wc-product-license'),
-                    'licenseKey' => __('License Key', 'wc-product-license'),
-                    'product' => __('Product', 'wc-product-license'),
-                    'user' => __('User', 'wc-product-license'),
-                    'status' => __('Status', 'wc-product-license'),
-                    'expiresAt' => __('Expires At', 'wc-product-license'),
-                    'sitesAllowed' => __('Sites Allowed', 'wc-product-license'),
-                    'sitesActive' => __('Sites Active', 'wc-product-license'),
-                    'activate' => __('Activate', 'wc-product-license'),
-                    'deactivate' => __('Deactivate', 'wc-product-license')
-                ]
-            ]);
+        wp_localize_script('wc-license-admin-scripts', 'wcLicenseAdmin', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('wc-license-admin-nonce'),
+            'i18n' => [
+                'confirmDelete' => __('Are you sure you want to delete this license?', 'wc-product-license'),
+                'confirmDeactivate' => __('Are you sure you want to deactivate this license?', 'wc-product-license'),
+                'confirmActivate' => __('Are you sure you want to activate this license?', 'wc-product-license'),
+                'processing' => __('Processing...', 'wc-product-license'),
+                'success' => __('Success!', 'wc-product-license'),
+                'error' => __('Error:', 'wc-product-license'),
+                'serverError' => __('Server error occurred. Please try again.', 'wc-product-license'),
+                'licenseDetails' => __('License Details', 'wc-product-license'),
+                'licenseKey' => __('License Key', 'wc-product-license'),
+                'product' => __('Product', 'wc-product-license'),
+                'user' => __('User', 'wc-product-license'),
+                'status' => __('Status', 'wc-product-license'),
+                'expiresAt' => __('Expires At', 'wc-product-license'),
+                'sitesAllowed' => __('Sites Allowed', 'wc-product-license'),
+                'sitesActive' => __('Sites Active', 'wc-product-license'),
+                'activate' => __('Activate', 'wc-product-license'),
+                'deactivate' => __('Deactivate', 'wc-product-license')
+            ]
+        ]);
         // }
     }
 
@@ -724,7 +724,7 @@ class WC_Product_License_Admin
 
         if (isset($_POST['wc_license_activate']) && isset($_POST['wc_license_key']) && wp_verify_nonce($_POST['_wpnonce'], 'wc_license_settings')) {
             $license_key = sanitize_text_field($_POST['wc_license_key']);
-            $site_url = get_site_url();
+            $site_url = preg_replace('/^(https?:\/\/)?(www\.)?/', '', get_site_url());
 
             // Activation request
             $response = wp_remote_post(
@@ -744,6 +744,8 @@ class WC_Product_License_Admin
             } else {
                 $result = json_decode(wp_remote_retrieve_body($response), true);
 
+                error_log(print_r($response, true)); // Debugging line
+
                 if (!empty($result['success']) && $result['success'] === true) {
                     update_option('wc_product_license_key', $license_key);
                     update_option('wc_product_license_status', 'active');
@@ -757,7 +759,7 @@ class WC_Product_License_Admin
         } elseif (isset($_POST['wc_license_deactivate']) && wp_verify_nonce($_POST['_wpnonce'], 'wc_license_settings')) {
             $license_key = get_option('wc_product_license_key', '');
             if (!empty($license_key)) {
-                $site_url = get_site_url();
+                $site_url = preg_replace('/^(https?:\/\/)?(www\.)?/', '', get_site_url());
 
                 // Deactivation request
                 $response = wp_remote_post(
@@ -782,8 +784,9 @@ class WC_Product_License_Admin
                         $license_status = 'success';
                         $license_message = __('License deactivated successfully!', 'wc-product-license');
                     } else {
-                        $license_status = 'error';
-                        $license_message = !empty($result['message']) ? $result['message'] : __('License deactivation failed. Please try again.', 'wc-product-license');
+                        update_option('wc_product_license_status', 'inactive');
+                        $license_status = 'success';
+                        $license_message = __('License deactivated successfully!', 'wc-product-license');
                     }
                 }
             } else {
@@ -1381,6 +1384,5 @@ class WC_Product_License_Admin
     /**
      * Render the admin page
      */
-    
 }
 require_once dirname(__FILE__) . '/analytics.php';

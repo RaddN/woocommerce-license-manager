@@ -2,11 +2,11 @@
 
 /**
  * Plugin Name: WooCommerce Product License Manager
- * Plugin URI: https://example.com/wc-product-license-manager
+ * Plugin URI: https://wppluginzone.com/woocommerce-product-license-manager
  * Description: Sell and manage licenses for WooCommerce downloadable products
  * Version: 1.0.0
- * Author: Your Name
- * Author URI: https://example.com
+ * Author: wppluginzone
+ * Author URI: https://wppluginzone.com/
  * Text Domain: wc-product-license
  * Requires at least: 5.0
  * Requires PHP: 7.2
@@ -23,11 +23,42 @@ if (!in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get
     });
     return;
 }
+
+register_activation_hook(__FILE__, 'your_plugin_activation_function');
+
+function your_plugin_activation_function() {
+    global $wpdb;
+
+    $table_name = $wpdb->prefix . 'wc_product_licenses';
+
+        $charset_collate = $wpdb->get_charset_collate();
+
+        $sql = "CREATE TABLE $table_name (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            license_key varchar(255) NOT NULL,
+            product_id bigint(20) NOT NULL,
+            order_id bigint(20) NOT NULL,
+            user_id bigint(20) NOT NULL,
+            status varchar(20) NOT NULL,
+            sites_allowed int(11) NOT NULL DEFAULT 1,
+            sites_active int(11) NOT NULL DEFAULT 0,
+            expires_at datetime DEFAULT NULL,
+            purchased_at datetime NOT NULL,
+            purchased_price decimal(10,2) NOT NULL DEFAULT 0,
+            active_sites longtext,
+            PRIMARY KEY  (id),
+            UNIQUE KEY license_key (license_key)
+        ) $charset_collate;";
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+}
 class WC_Product_License_Manager
 {
 
     public function __construct()
     {
+        
         // Product editing metabox
         add_action('woocommerce_product_options_general_product_data', [$this, 'add_license_option_to_products']);
         add_action('woocommerce_process_product_meta', [$this, 'save_license_product_option']);
@@ -37,7 +68,8 @@ class WC_Product_License_Manager
         add_action('woocommerce_process_product_meta', [$this, 'save_license_variations']);
 
         // Order management
-        add_action('woocommerce_checkout_order_processed', [$this, 'generate_license_keys'], 10, 3);
+        // add_action('woocommerce_checkout_order_processed', [$this, 'generate_license_keys'], 10, 3);
+        add_action('woocommerce_thankyou', array($this, 'generate_license_keys'), 10, 2);
         add_filter('manage_shop_order_posts_columns', [$this, 'add_license_column_to_orders']);
         add_action('manage_shop_order_posts_custom_column', [$this, 'add_license_column_content'], 10, 2);
 
@@ -228,9 +260,17 @@ class WC_Product_License_Manager
     /**
      * Generate license keys when order is processed
      */
-    public function generate_license_keys($order_id, $posted_data, $order)
+    public function generate_license_keys($order_id)
     {
-        if (!$order) return;
+        error_log('Generating license keys for order ID: ' . $order_id);
+        if (!$order_id) return;
+
+        $order = wc_get_order($order_id);
+
+        if (!$order) {
+            error_log('Order not found: ' . $order_id);
+            return;
+        }
 
         foreach ($order->get_items() as $item_id => $item) {
             $product_id = $item->get_product_id();
@@ -288,31 +328,6 @@ class WC_Product_License_Manager
         global $wpdb;
 
         $table_name = $wpdb->prefix . 'wc_product_licenses';
-
-        // Create table if it doesn't exist
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
-            $charset_collate = $wpdb->get_charset_collate();
-
-            $sql = "CREATE TABLE $table_name (
-                id bigint(20) NOT NULL AUTO_INCREMENT,
-                license_key varchar(255) NOT NULL,
-                product_id bigint(20) NOT NULL,
-                order_id bigint(20) NOT NULL,
-                user_id bigint(20) NOT NULL,
-                status varchar(20) NOT NULL,
-                sites_allowed int(11) NOT NULL DEFAULT 1,
-                sites_active int(11) NOT NULL DEFAULT 0,
-                expires_at datetime DEFAULT NULL,
-                purchased_at datetime NOT NULL,
-                purchased_price decimal(10,2) NOT NULL DEFAULT 0,
-                active_sites longtext,
-                PRIMARY KEY  (id),
-                UNIQUE KEY license_key (license_key)
-            ) $charset_collate;";
-
-            require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-            dbDelta($sql);
-        }
 
         // Insert data
         $wpdb->insert(

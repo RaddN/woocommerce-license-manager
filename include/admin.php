@@ -749,6 +749,7 @@ class WC_Product_License_Admin
                 if (!empty($result['success']) && $result['success'] === true) {
                     update_option('wc_product_license_key', $license_key);
                     update_option('wc_product_license_status', 'active');
+                    update_option('wc_product_license_expiry', $result['expiry_date'] ?? null);
                     $license_status = 'success';
                     $license_message = __('License activated successfully!', 'wc-product-license');
                 } else {

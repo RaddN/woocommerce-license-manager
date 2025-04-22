@@ -60,6 +60,8 @@ class WC_Product_License_Manager
     public function __construct()
     {
 
+        if(get_option('plugincywc_product_license_expiry') == 'yes') {
+            
         // Product editing metabox
         add_action('woocommerce_product_options_general_product_data', [$this, 'add_license_option_to_products']);
         add_action('woocommerce_process_product_meta', [$this, 'save_license_product_option']);
@@ -120,6 +122,11 @@ class WC_Product_License_Manager
 
         // Add upgrade processing
         add_action('woocommerce_add_to_cart', [$this, 'process_license_upgrade'], 10, 6);
+        }else {
+            add_action('admin_notices', function () {
+                echo '<div class="error"><p>' . esc_html__('Please activate your license.', 'wc-product-license') . '</p></div>';
+            });
+        }
     }
 
 
@@ -1477,6 +1484,18 @@ require_once plugin_dir_path(__FILE__) . 'include/admin.php';
 
 function product_license_init()
 {
+    // Check if license has expired
+    $license_expiry = get_option('plugincywc_product_license_expiry');
+    $current_date = current_time('timestamp');
+
+    // If expiry date exists and has passed
+    if ($license_expiry && strtotime($license_expiry) < $current_date) {
+        // Update the license status to expired
+        update_option('plugincywc_product_license_status', 'expired');
+
+        // You might want to log this change
+        error_log('License expired on ' . $license_expiry . '. Status updated to expired.');
+    }
     send_tracking_info();
     new WC_Product_License_Manager();
     new WC_Product_License_Admin();

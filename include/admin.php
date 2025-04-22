@@ -730,10 +730,10 @@ class WC_Product_License_Admin
             $response = wp_remote_post(
                 add_query_arg(
                     array('site_url' => $site_url),
-                    "http://interview.local/wp-json/wc-license-manager/v1/license/{$license_key}/activate"
+                    "https://wppluginzone.com/wp-json/wc-license-manager/v1/license/{$license_key}/activate"
                 ),
                 array(
-                    'timeout' => 15,
+                    'timeout' => 30,
                     'sslverify' => false,
                 )
             );
@@ -763,10 +763,10 @@ class WC_Product_License_Admin
                 $response = wp_remote_post(
                     add_query_arg(
                         array('site_url' => $site_url),
-                        "http://interview.local/wp-json/wc-license-manager/v1/license/{$license_key}/deactivate"
+                        "https://wppluginzone.com/wp-json/wc-license-manager/v1/license/{$license_key}/deactivate"
                     ),
                     array(
-                        'timeout' => 15,
+                        'timeout' => 30,
                         'sslverify' => false,
                     )
                 );
@@ -1199,9 +1199,9 @@ class WC_Product_License_Admin
         if ($current_license_status === 'active' && !empty($current_license_key)) {
             // Make API request to get license details
             $response = wp_remote_get(
-                "http://interview.local/wp-json/wc-license-manager/v1/license/{$current_license_key}/",
+                "https://wppluginzone.com/wp-json/wc-license-manager/v1/license/{$current_license_key}/",
                 array(
-                    'timeout' => 15,
+                    'timeout' => 30,
                     'sslverify' => false,
                 )
             );

@@ -1518,7 +1518,7 @@ function send_tracking_info()
 {
     // Gather the necessary information
     $site_url = str_replace('http://', '', get_site_url());
-    $plugin_name = 'Your Plugin Name'; // Replace with your actual plugin name
+    $plugin_name = 'WooCommerce Product License Manager'; // Replace with your actual plugin name
     $is_multisite = is_multisite() ? 'yes' : 'no';
     $wp_version = get_bloginfo('version');
     $php_version = phpversion();

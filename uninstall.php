@@ -275,7 +275,7 @@ class Plugin_Deactivation_Feedback {
  * 
  * // Initialize the feedback system in your main plugin file
  * function initialize_deactivation_feedback() {
- *     new Plugin_Deactivation_Feedback('Your Plugin Name', 'your-plugin-folder/your-plugin-main-file.php');
+ *     new Plugin_Deactivation_Feedback('WooCommerce Product License Manager', 'your-plugin-folder/your-plugin-main-file.php');
  * }
  * add_action('plugins_loaded', 'initialize_deactivation_feedback');
  */

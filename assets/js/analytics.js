@@ -1,119 +1,69 @@
-jQuery(document).ready(function($) {
-    // Set global chart options
-    const chartOptions = {
+jQuery(function ($) {
+    const charts = window.wcLicenseAnalytics && window.wcLicenseAnalytics.charts ? window.wcLicenseAnalytics.charts : {};
+
+    const baseOptions = {
         responsive: true,
         maintainAspectRatio: false,
+        animation: {
+            duration: 450,
+        },
         plugins: {
             legend: {
-                position: 'right',
+                position: "bottom",
                 labels: {
                     boxWidth: 12,
-                    padding: 15
-                }
-            }
-        }
+                    padding: 18,
+                    usePointStyle: true,
+                    pointStyle: "circle",
+                },
+            },
+            tooltip: {
+                displayColors: true,
+                backgroundColor: "#0f172a",
+                titleColor: "#f8fafc",
+                bodyColor: "#e2e8f0",
+                padding: 12,
+            },
+        },
+        scales: {
+            x: {
+                ticks: {
+                    color: "#475569",
+                    maxRotation: 0,
+                    autoSkip: true,
+                },
+                grid: {
+                    display: false,
+                },
+            },
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    color: "#475569",
+                    precision: 0,
+                },
+                grid: {
+                    color: "rgba(148, 163, 184, 0.18)",
+                },
+            },
+        },
     };
-    
-    // Create Active vs Deactive chart
-    if ($("#active-deactive-chart").length) {
-        new Chart($("#active-deactive-chart"), {
-            type: 'doughnut',
-            data: {
-                labels: wcLicenseAnalytics.activeVsDeactive.labels,
-                datasets: [{
-                    data: wcLicenseAnalytics.activeVsDeactive.data,
-                    backgroundColor: wcLicenseAnalytics.activeVsDeactive.backgroundColor
-                }]
-            },
-            options: chartOptions
-        });
-    }
-    
-    // Create Multisite vs Single Site chart
-    if ($("#multisite-chart").length) {
-        new Chart($("#multisite-chart"), {
-            type: 'doughnut',
-            data: {
-                labels: wcLicenseAnalytics.multisite.labels,
-                datasets: [{
-                    data: wcLicenseAnalytics.multisite.data,
-                    backgroundColor: wcLicenseAnalytics.multisite.backgroundColor
-                }]
-            },
-            options: chartOptions
-        });
-    }
-    
-    // Create WordPress Versions chart
-    if ($("#wordpress-versions-chart").length) {
-        new Chart($("#wordpress-versions-chart"), {
-            type: 'doughnut',
-            data: {
-                labels: wcLicenseAnalytics.wordpressVersions.labels,
-                datasets: [{
-                    data: wcLicenseAnalytics.wordpressVersions.data,
-                    backgroundColor: wcLicenseAnalytics.wordpressVersions.backgroundColor
-                }]
-            },
-            options: chartOptions
-        });
-    }
-    
-    // Create MySQL Versions chart
-    if ($("#mysql-versions-chart").length) {
-        new Chart($("#mysql-versions-chart"), {
-            type: 'doughnut',
-            data: {
-                labels: wcLicenseAnalytics.mysqlVersions.labels,
-                datasets: [{
-                    data: wcLicenseAnalytics.mysqlVersions.data,
-                    backgroundColor: wcLicenseAnalytics.mysqlVersions.backgroundColor
-                }]
-            },
-            options: chartOptions
-        });
-    }
-    
-    // Create PHP Versions chart
-    if ($("#php-versions-chart").length) {
-        new Chart($("#php-versions-chart"), {
-            type: 'doughnut',
-            data: {
-                labels: wcLicenseAnalytics.phpVersions.labels,
-                datasets: [{
-                    data: wcLicenseAnalytics.phpVersions.data,
-                    backgroundColor: wcLicenseAnalytics.phpVersions.backgroundColor
-                }]
-            },
-            options: chartOptions
-        });
-    }
-    
-    // Create Server Software chart
-    if ($("#server-software-chart").length) {
-        new Chart($("#server-software-chart"), {
-            type: 'doughnut',
-            data: {
-                labels: wcLicenseAnalytics.serverSoftware.labels,
-                datasets: [{
-                    data: wcLicenseAnalytics.serverSoftware.data,
-                    backgroundColor: wcLicenseAnalytics.serverSoftware.backgroundColor
-                }]
-            },
-            options: chartOptions
-        });
-    }
-    
-    // Initialize dropdown actions for deactivation reasons filters
-    $('.dropdown-toggle').on('click', function(e) {
-        e.preventDefault();
-        $(this).next('.dropdown-menu').toggleClass('show');
-    });
-    
-    // Close dropdown when clicking outside
-    $(document).on('click', function(e) {
-        if (!$(e.target).closest('.dropdown').length) {
-            $('.dropdown-menu').removeClass('show');
+
+    Object.entries(charts).forEach(([canvasId, config]) => {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas || !config || !Array.isArray(config.data?.labels) || !config.data.labels.length) {
+            return;
         }
+
+        const options = $.extend(true, {}, baseOptions, config.options || {});
+        if (config.type === "doughnut" || config.type === "pie") {
+            delete options.scales;
+        }
+
+        new Chart(canvas, {
+            type: config.type,
+            data: config.data,
+            options,
+        });
     });
 });

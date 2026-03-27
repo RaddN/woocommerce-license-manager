@@ -45,9 +45,9 @@ class WC_License_List_Table extends WP_List_Table
             'cb'            => '<input type="checkbox" />',
             'license_key'   => __('License Key', 'wc-product-license'),
             'product'       => __('Product', 'wc-product-license'),
-            'user'          => __('User', 'wc-product-license'),
+            'user'          => __('Customer', 'wc-product-license'),
             'status'        => __('Status', 'wc-product-license'),
-            'sites'         => __('Sites', 'wc-product-license'),
+            'sites'         => __('Activations', 'wc-product-license'),
             'expires'       => __('Expires', 'wc-product-license'),
             'purchased'     => __('Purchased', 'wc-product-license'),
             'actions'       => __('Actions', 'wc-product-license')
@@ -108,36 +108,42 @@ class WC_License_List_Table extends WP_List_Table
      */
     public function column_license_key($item)
     {
+        $manage_url = admin_url('admin.php?page=wc-license-keys&action=manage&license_id=' . absint($item['id']));
+        $extend_url = $manage_url . '#wc-license-renewal-panel';
+        $effective_status = $this->get_effective_status($item);
+        $status_action = $effective_status === 'active' ? 'deactivate' : 'activate';
+        $status_label = $effective_status === 'active'
+            ? __('Disable', 'wc-product-license')
+            : __('Enable', 'wc-product-license');
+
         $actions = [
-            'edit' => sprintf(
+            'manage' => sprintf(
                 '<a href="%s">%s</a>',
-                admin_url('admin.php?page=wc-license-keys&action=edit&license_id=' . $item['id']),
-                __('Edit', 'wc-product-license')
+                esc_url($manage_url),
+                __('Manage', 'wc-product-license')
+            ),
+            'extend' => sprintf(
+                '<a href="%s">%s</a>',
+                esc_url($extend_url),
+                __('Extend', 'wc-product-license')
+            ),
+            'status' => sprintf(
+                '<a href="#" class="%s" data-id="%d">%s</a>',
+                esc_attr($status_action . '-license'),
+                absint($item['id']),
+                esc_html($status_label)
             ),
             'delete' => sprintf(
                 '<a href="#" class="delete-license" data-id="%s">%s</a>',
                 $item['id'],
                 __('Delete', 'wc-product-license')
             ),
-            'view' => sprintf(
-            '<a href="#" class="view-license" data-id="%d" data-key="%s" data-product="%s" data-user="%s" data-status="%s" data-expires="%s" data-sites-allowed="%s" data-sites-active="%d" data-activation-usage="%s" data-sites="%s">%s</a>',
-            $item['id'],
-            esc_attr($item['license_key']),
-            esc_attr(get_the_title($item['product_id'])),
-            esc_attr($this->get_user_display_label($item['user_id'])),
-            esc_attr($item['status']),
-            esc_attr($item['expires_at']),
-            esc_attr(wc_product_license_get_activation_limit_text($item['sites_allowed'])),
-            esc_attr($item['sites_active']),
-            esc_attr(wc_product_license_get_activation_usage_text($item['sites_active'], $item['sites_allowed'])),
-            esc_attr($item['active_sites']),
-            __('View', 'wc-product-license')
-        ),
         ];
 
         return sprintf(
-            '<strong>%1$s</strong> %2$s',
-            $item['license_key'],
+            '<strong><a href="%1$s">%2$s</a></strong> %3$s',
+            esc_url($manage_url),
+            esc_html($item['license_key']),
             $this->row_actions($actions)
         );
     }
@@ -156,12 +162,15 @@ class WC_License_List_Table extends WP_List_Table
      */
     public function column_user($item)
     {
-        $user = get_user_by('id', $item['user_id']);
-        return $user ? sprintf(
-            '<a href="%s">%s</a>',
-            admin_url('user-edit.php?user_id=' . $user->ID),
-            esc_html($user->display_name . ' (' . $user->user_email . ')')
-        ) : esc_html($this->get_user_display_label($item['user_id']));
+        $context = wc_product_license_get_customer_context_from_license($item);
+        $meta = $context['email'] !== '' ? $context['email'] : $context['type_label'];
+
+        return sprintf(
+            '<a href="%1$s">%2$s</a><span class="wc-license-detail-meta">%3$s</span>',
+            esc_url($context['customer_url']),
+            esc_html($context['name']),
+            esc_html($meta)
+        );
     }
 
     /**
@@ -181,8 +190,9 @@ class WC_License_List_Table extends WP_List_Table
             'expired'  => __('Expired', 'wc-product-license')
         ];
 
-        $class = isset($status_classes[$item['status']]) ? $status_classes[$item['status']] : '';
-        $label = isset($status_labels[$item['status']]) ? $status_labels[$item['status']] : $item['status'];
+        $status = $this->get_effective_status($item);
+        $class = isset($status_classes[$status]) ? $status_classes[$status] : '';
+        $label = isset($status_labels[$status]) ? $status_labels[$status] : $status;
 
         return sprintf('<span class="%s">%s</span>', $class, $label);
     }
@@ -251,19 +261,24 @@ class WC_License_List_Table extends WP_List_Table
     public function column_actions($item)
     {
         $actions = '<div class="license-actions">';
+        $actions .= sprintf(
+            '<a href="%s" class="button button-secondary">%s</a>',
+            esc_url(admin_url('admin.php?page=wc-license-keys&action=manage&license_id=' . absint($item['id']))),
+            esc_html__('Manage', 'wc-product-license')
+        );
 
         // Status-dependent buttons
-        if ($item['status'] === 'active') {
+        if ($this->get_effective_status($item) === 'active') {
             $actions .= sprintf(
                 '<a href="#" class="button deactivate-license" data-id="%d">%s</a>',
                 $item['id'],
-                __('Deactivate', 'wc-product-license')
+                __('Disable', 'wc-product-license')
             );
         } else {
             $actions .= sprintf(
                 '<a href="#" class="button activate-license" data-id="%d">%s</a>',
                 $item['id'],
-                __('Activate', 'wc-product-license')
+                __('Enable', 'wc-product-license')
             );
         }
 
@@ -314,30 +329,83 @@ class WC_License_List_Table extends WP_List_Table
         // Build query
         $per_page = 20;
         $current_page = $this->get_pagenum();
-        $total_items = (int)$wpdb->get_var("SELECT COUNT(id) FROM $table_name");
-
-        // Handle search
         $search = isset($_REQUEST['s']) ? sanitize_text_field(wp_unslash($_REQUEST['s'])) : '';
-        $where = '';
+        $status_filter = $this->get_status_filter();
+        $expiring_cutoff = strtotime('+30 days', current_time('timestamp'));
 
-        if (!empty($search)) {
-            $where = $wpdb->prepare(
-                "WHERE license_key LIKE %s OR id = %d",
-                '%' . $wpdb->esc_like($search) . '%',
-                is_numeric($search) ? (int)$search : 0
-            );
+        $items = $wpdb->get_results("SELECT * FROM {$table_name}", ARRAY_A);
+        $items = is_array($items) ? $items : [];
+
+        if ($search !== '') {
+            $search_lower = function_exists('mb_strtolower') ? mb_strtolower($search) : strtolower($search);
+            $items = array_values(array_filter($items, function ($item) use ($search, $search_lower) {
+                $license_key = isset($item['license_key']) ? (string) $item['license_key'] : '';
+                $license_key = function_exists('mb_strtolower') ? mb_strtolower($license_key) : strtolower($license_key);
+
+                if (is_numeric($search) && (int) $item['id'] === (int) $search) {
+                    return true;
+                }
+
+                return strpos($license_key, $search_lower) !== false;
+            }));
         }
 
-        // Handle sorting
-        $orderby = !empty($_REQUEST['orderby']) ? sanitize_sql_orderby($_REQUEST['orderby']) : 'id';
-        $order = !empty($_REQUEST['order']) ? sanitize_text_field($_REQUEST['order']) : 'DESC';
+        if ($status_filter !== '') {
+            $items = array_values(array_filter($items, function ($item) use ($status_filter, $expiring_cutoff) {
+                $effective_status = $this->get_effective_status($item);
 
-        // Get data
-        $sql = "SELECT * FROM $table_name $where ORDER BY $orderby $order LIMIT %d OFFSET %d";
-        $this->items = $wpdb->get_results(
-            $wpdb->prepare($sql, $per_page, ($current_page - 1) * $per_page),
-            ARRAY_A
-        );
+                if ($status_filter === 'expiring') {
+                    if ($effective_status !== 'active') {
+                        return false;
+                    }
+
+                    $expires_at = isset($item['expires_at']) ? (string) $item['expires_at'] : '';
+                    if ($expires_at === '' || $expires_at === '0000-00-00 00:00:00') {
+                        return false;
+                    }
+
+                    $expiry_timestamp = strtotime($expires_at);
+
+                    return $expiry_timestamp && $expiry_timestamp <= $expiring_cutoff;
+                }
+
+                return $effective_status === $status_filter;
+            }));
+        }
+
+        $total_items = count($items);
+
+        $allowed_orderby = ['id', 'license_key', 'product_id', 'user_id', 'status', 'expires_at', 'purchased_at'];
+        $orderby = !empty($_REQUEST['orderby']) ? sanitize_key($_REQUEST['orderby']) : 'id';
+        if (!in_array($orderby, $allowed_orderby, true)) {
+            $orderby = 'id';
+        }
+
+        $order = !empty($_REQUEST['order']) ? strtoupper(sanitize_text_field($_REQUEST['order'])) : 'DESC';
+        $order = $order === 'ASC' ? 'ASC' : 'DESC';
+
+        usort($items, function ($left, $right) use ($orderby, $order) {
+            if ($orderby === 'status') {
+                $left_value = $this->get_effective_status($left);
+                $right_value = $this->get_effective_status($right);
+            } else {
+                $left_value = isset($left[$orderby]) ? $left[$orderby] : '';
+                $right_value = isset($right[$orderby]) ? $right[$orderby] : '';
+            }
+
+            if (in_array($orderby, ['id', 'product_id', 'user_id'], true)) {
+                $comparison = (int) $left_value <=> (int) $right_value;
+            } elseif (in_array($orderby, ['expires_at', 'purchased_at'], true)) {
+                $comparison = strtotime((string) $left_value) <=> strtotime((string) $right_value);
+            } else {
+                $comparison = strnatcasecmp((string) $left_value, (string) $right_value);
+            }
+
+            return $order === 'ASC' ? $comparison : -$comparison;
+        });
+
+        $offset = ($current_page - 1) * $per_page;
+        $this->items = array_slice($items, $offset, $per_page);
 
         // Setup pagination
         $this->set_pagination_args([
@@ -383,6 +451,30 @@ class WC_License_List_Table extends WP_List_Table
             <br class="clear" />
         </div>
 <?php
+    }
+
+    private function get_status_filter()
+    {
+        $status = isset($_REQUEST['status']) ? sanitize_key(wp_unslash($_REQUEST['status'])) : '';
+        $allowed = ['active', 'inactive', 'expired', 'expiring'];
+
+        return in_array($status, $allowed, true) ? $status : '';
+    }
+
+    private function get_effective_status($item)
+    {
+        $status = isset($item['status']) ? (string) $item['status'] : 'inactive';
+        $expires_at = isset($item['expires_at']) ? (string) $item['expires_at'] : '';
+
+        if ($expires_at !== '' && $expires_at !== '0000-00-00 00:00:00' && strtotime($expires_at) < current_time('timestamp')) {
+            return 'expired';
+        }
+
+        if ($status === 'active' || $status === 'expired') {
+            return $status;
+        }
+
+        return 'inactive';
     }
 
     /**

@@ -24,17 +24,40 @@ if (!in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get
     return;
 }
 
-register_activation_hook(__FILE__, 'your_plugin_activation_function');
+if (!defined('WC_PRODUCT_LICENSE_DB_VERSION')) {
+    define('WC_PRODUCT_LICENSE_DB_VERSION', '1.3.0');
+}
 
-function your_plugin_activation_function()
+register_activation_hook(__FILE__, 'your_plugin_activation_function');
+add_action('plugins_loaded', 'wc_product_license_maybe_upgrade_database', 1);
+add_action('init', 'wc_product_license_maybe_backfill_activation_records', 1);
+add_action('init', 'wc_product_license_maybe_backfill_tracking_site_records', 2);
+
+function wc_product_license_get_table_name($table = 'licenses')
 {
     global $wpdb;
 
-    $table_name = $wpdb->prefix . 'wc_product_licenses';
+    $table = in_array($table, ['licenses', 'activity', 'activations'], true) ? $table : 'licenses';
 
+    $map = [
+        'licenses' => 'wc_product_licenses',
+        'activity' => 'wc_product_license_activity',
+        'activations' => 'wc_product_license_activations',
+    ];
+
+    return $wpdb->prefix . $map[$table];
+}
+
+function wc_product_license_install_database()
+{
+    global $wpdb;
+
+    $licenses_table = wc_product_license_get_table_name('licenses');
+    $activity_table = wc_product_license_get_table_name('activity');
+    $activations_table = wc_product_license_get_table_name('activations');
     $charset_collate = $wpdb->get_charset_collate();
 
-    $sql = "CREATE TABLE $table_name (
+    $licenses_sql = "CREATE TABLE {$licenses_table} (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             license_key varchar(255) NOT NULL,
             product_id bigint(20) NOT NULL,
@@ -49,10 +72,1086 @@ function your_plugin_activation_function()
             active_sites longtext,
             PRIMARY KEY  (id),
             UNIQUE KEY license_key (license_key)
-        ) $charset_collate;";
+        ) {$charset_collate};";
+
+    $activity_sql = "CREATE TABLE {$activity_table} (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            license_id bigint(20) NOT NULL DEFAULT 0,
+            license_key varchar(255) NOT NULL,
+            event_type varchar(60) NOT NULL,
+            message text NOT NULL,
+            details longtext NULL,
+            actor_id bigint(20) NOT NULL DEFAULT 0,
+            actor_name varchar(191) NOT NULL DEFAULT '',
+            source varchar(60) NOT NULL DEFAULT 'system',
+            site_url varchar(255) NOT NULL DEFAULT '',
+            created_at datetime NOT NULL,
+            PRIMARY KEY  (id),
+            KEY license_id (license_id),
+            KEY license_key (license_key(191)),
+            KEY event_type (event_type),
+            KEY created_at (created_at)
+        ) {$charset_collate};";
+
+    $activations_sql = "CREATE TABLE {$activations_table} (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            license_id bigint(20) NOT NULL DEFAULT 0,
+            license_key varchar(255) NOT NULL DEFAULT '',
+            product_id bigint(20) NOT NULL DEFAULT 0,
+            order_id bigint(20) NOT NULL DEFAULT 0,
+            user_id bigint(20) NOT NULL DEFAULT 0,
+            product_name varchar(191) NOT NULL DEFAULT '',
+            site_name varchar(191) NOT NULL DEFAULT '',
+            site_url varchar(255) NOT NULL DEFAULT '',
+            site_hash varchar(64) NOT NULL DEFAULT '',
+            status varchar(20) NOT NULL DEFAULT 'active',
+            telemetry_source varchar(60) NOT NULL DEFAULT 'activation',
+            multisite tinyint(1) NOT NULL DEFAULT 0,
+            wordpress_version varchar(50) NOT NULL DEFAULT '',
+            php_version varchar(50) NOT NULL DEFAULT '',
+            mysql_version varchar(50) NOT NULL DEFAULT '',
+            server_software varchar(191) NOT NULL DEFAULT '',
+            environment_type varchar(50) NOT NULL DEFAULT '',
+            active_theme varchar(191) NOT NULL DEFAULT '',
+            active_theme_version varchar(50) NOT NULL DEFAULT '',
+            plugin_version varchar(50) NOT NULL DEFAULT '',
+            last_ip varchar(100) NOT NULL DEFAULT '',
+            deactivation_reason varchar(191) NOT NULL DEFAULT '',
+            site_meta longtext NULL,
+            request_count bigint(20) NOT NULL DEFAULT 1,
+            first_requested_at datetime NOT NULL,
+            last_requested_at datetime NOT NULL,
+            deactivated_at datetime DEFAULT NULL,
+            created_at datetime NOT NULL,
+            updated_at datetime NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY license_site (license_id, site_hash),
+            KEY license_id (license_id),
+            KEY license_key (license_key(191)),
+            KEY product_id (product_id),
+            KEY user_id (user_id),
+            KEY status (status),
+            KEY multisite (multisite),
+            KEY wordpress_version (wordpress_version),
+            KEY php_version (php_version),
+            KEY environment_type (environment_type),
+            KEY active_theme (active_theme(191)),
+            KEY last_requested_at (last_requested_at)
+        ) {$charset_collate};";
 
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-    dbDelta($sql);
+    dbDelta($licenses_sql);
+    dbDelta($activity_sql);
+    dbDelta($activations_sql);
+
+    update_option('wc_product_license_db_version', WC_PRODUCT_LICENSE_DB_VERSION);
+}
+
+function your_plugin_activation_function()
+{
+    wc_product_license_install_database();
+}
+
+function wc_product_license_maybe_upgrade_database()
+{
+    global $wpdb;
+
+    $installed_version = (string) get_option('wc_product_license_db_version', '');
+    $licenses_table = wc_product_license_get_table_name('licenses');
+    $activity_table = wc_product_license_get_table_name('activity');
+    $activations_table = wc_product_license_get_table_name('activations');
+    $has_licenses_table = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $licenses_table));
+    $has_activity_table = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $activity_table));
+    $has_activations_table = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $activations_table));
+
+    if (
+        $installed_version !== WC_PRODUCT_LICENSE_DB_VERSION ||
+        $has_licenses_table !== $licenses_table ||
+        $has_activity_table !== $activity_table ||
+        $has_activations_table !== $activations_table
+    ) {
+        wc_product_license_install_database();
+        return;
+    }
+
+}
+
+function wc_product_license_maybe_backfill_activation_records()
+{
+    global $wpdb;
+
+    static $did_run = false;
+
+    if ($did_run) {
+        return;
+    }
+
+    $did_run = true;
+
+    $activations_table = wc_product_license_get_table_name('activations');
+    $licenses_table = wc_product_license_get_table_name('licenses');
+    $activity_table = wc_product_license_get_table_name('activity');
+    $target_version = (string) WC_PRODUCT_LICENSE_DB_VERSION;
+    $backfill_version = (string) get_option('wc_product_license_activation_backfill_version', '');
+
+    if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $activations_table)) !== $activations_table) {
+        return;
+    }
+
+    $activation_count = (int) $wpdb->get_var('SELECT COUNT(*) FROM ' . $activations_table);
+    if ($activation_count > 0 && $backfill_version === $target_version) {
+        return;
+    }
+
+    $site_activity_count = (int) $wpdb->get_var(
+        "SELECT COUNT(*) FROM {$activity_table} WHERE site_url != '' AND event_type IN ('site_activated', 'site_deactivated')"
+    );
+
+    $licenses = $wpdb->get_results("SELECT id, sites_active, active_sites FROM {$licenses_table}");
+    $licenses = is_array($licenses) ? $licenses : [];
+    $has_license_site_data = false;
+
+    foreach ($licenses as $license) {
+        $active_sites = maybe_unserialize($license->active_sites);
+        $active_sites = is_array($active_sites) ? array_filter($active_sites) : [];
+
+        if ((int) $license->sites_active > 0 || !empty($active_sites)) {
+            $has_license_site_data = true;
+            break;
+        }
+    }
+
+    if ($activation_count > 0) {
+        update_option('wc_product_license_activation_backfill_version', $target_version);
+        return;
+    }
+
+    if ($site_activity_count < 1 && !$has_license_site_data) {
+        update_option('wc_product_license_activation_backfill_version', $target_version);
+        return;
+    }
+
+    wc_product_license_backfill_activation_records();
+    update_option('wc_product_license_activation_backfill_version', $target_version);
+}
+
+function wc_product_license_get_activity_actor_name($actor_id, $source = 'system')
+{
+    $actor_id = absint($actor_id);
+    if ($actor_id > 0) {
+        $user = get_user_by('id', $actor_id);
+        if ($user) {
+            return $user->display_name;
+        }
+    }
+
+    $labels = [
+        'admin' => __('Admin', 'wc-product-license'),
+        'customer' => __('Customer', 'wc-product-license'),
+        'customer_ajax' => __('Customer portal', 'wc-product-license'),
+        'api' => __('API client', 'wc-product-license'),
+        'order' => __('WooCommerce checkout', 'wc-product-license'),
+        'system' => __('System', 'wc-product-license'),
+    ];
+
+    return isset($labels[$source]) ? $labels[$source] : __('System', 'wc-product-license');
+}
+
+function wc_product_license_log_event($license, $event_type, $message, $args = [])
+{
+    global $wpdb;
+
+    $license_id = 0;
+    $license_key = '';
+
+    if (is_object($license)) {
+        $license_id = isset($license->id) ? absint($license->id) : 0;
+        $license_key = isset($license->license_key) ? (string) $license->license_key : '';
+    } elseif (is_array($license)) {
+        $license_id = isset($license['id']) ? absint($license['id']) : 0;
+        $license_key = isset($license['license_key']) ? (string) $license['license_key'] : '';
+    } elseif (is_numeric($license)) {
+        $license_id = absint($license);
+    } elseif (is_string($license)) {
+        $license_key = $license;
+    }
+
+    if ($license_id && $license_key === '') {
+        $license_key = (string) $wpdb->get_var($wpdb->prepare(
+            'SELECT license_key FROM ' . wc_product_license_get_table_name('licenses') . ' WHERE id = %d LIMIT 1',
+            $license_id
+        ));
+    }
+
+    if (!$license_id && $license_key !== '') {
+        $license_id = absint($wpdb->get_var($wpdb->prepare(
+            'SELECT id FROM ' . wc_product_license_get_table_name('licenses') . ' WHERE license_key = %s LIMIT 1',
+            $license_key
+        )));
+    }
+
+    if (!$license_id && $license_key === '') {
+        return 0;
+    }
+
+    $source = isset($args['source']) ? sanitize_key((string) $args['source']) : '';
+    if ($source === '') {
+        $source = get_current_user_id() ? 'admin' : 'system';
+    }
+
+    $actor_id = isset($args['actor_id']) ? absint($args['actor_id']) : get_current_user_id();
+    $actor_name = isset($args['actor_name']) ? sanitize_text_field((string) $args['actor_name']) : '';
+    if ($actor_name === '') {
+        $actor_name = wc_product_license_get_activity_actor_name($actor_id, $source);
+    }
+
+    $site_url = isset($args['site_url']) ? esc_url_raw((string) $args['site_url']) : '';
+    $details = isset($args['details']) && is_array($args['details']) ? $args['details'] : [];
+
+    $activity_table = wc_product_license_get_table_name('activity');
+
+    $wpdb->insert(
+        $activity_table,
+        [
+            'license_id' => $license_id,
+            'license_key' => $license_key,
+            'event_type' => sanitize_key((string) $event_type),
+            'message' => wp_strip_all_tags((string) $message),
+            'details' => !empty($details) ? wp_json_encode($details) : null,
+            'actor_id' => $actor_id,
+            'actor_name' => $actor_name,
+            'source' => $source,
+            'site_url' => $site_url,
+            'created_at' => current_time('mysql'),
+        ],
+        [
+            '%d',
+            '%s',
+            '%s',
+            '%s',
+            '%s',
+            '%d',
+            '%s',
+            '%s',
+            '%s',
+            '%s',
+        ]
+    );
+
+    return (int) $wpdb->insert_id;
+}
+
+function wc_product_license_get_activity_logs($license_id, $limit = 50)
+{
+    global $wpdb;
+
+    $limit = max(1, absint($limit));
+    $activity_table = wc_product_license_get_table_name('activity');
+    $logs = $wpdb->get_results($wpdb->prepare(
+        "SELECT * FROM {$activity_table} WHERE license_id = %d ORDER BY created_at DESC, id DESC LIMIT %d",
+        absint($license_id),
+        $limit
+    ));
+
+    if (empty($logs)) {
+        return [];
+    }
+
+    foreach ($logs as $log) {
+        $decoded = !empty($log->details) ? json_decode((string) $log->details, true) : [];
+        $log->details_data = is_array($decoded) ? $decoded : [];
+    }
+
+    return $logs;
+}
+
+function wc_product_license_get_activity_log_count($license_id)
+{
+    global $wpdb;
+
+    $activity_table = wc_product_license_get_table_name('activity');
+
+    return (int) $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(*) FROM {$activity_table} WHERE license_id = %d",
+        absint($license_id)
+    ));
+}
+
+function wc_product_license_sanitize_site_identifier($site_url)
+{
+    $site_url = trim((string) $site_url);
+    if ($site_url === '') {
+        return '';
+    }
+
+    $sanitized = esc_url_raw($site_url);
+    if ($sanitized === '') {
+        $sanitized = preg_replace('/\s+/', '', wp_strip_all_tags($site_url));
+    }
+
+    return (string) $sanitized;
+}
+
+function wc_product_license_get_activation_site_hash($site_url)
+{
+    $site_url = wc_product_license_sanitize_site_identifier($site_url);
+    if ($site_url === '') {
+        return '';
+    }
+
+    return md5(function_exists('mb_strtolower') ? mb_strtolower(untrailingslashit($site_url)) : strtolower(untrailingslashit($site_url)));
+}
+
+function wc_product_license_parse_tracking_flag($value)
+{
+    if (is_bool($value)) {
+        return $value ? 1 : 0;
+    }
+
+    $value = is_scalar($value) ? strtolower(trim((string) $value)) : '';
+
+    return in_array($value, ['1', 'true', 'yes', 'on', 'y'], true) ? 1 : 0;
+}
+
+function wc_product_license_sanitize_tracking_text($value, $max_length = 191)
+{
+    $value = sanitize_text_field((string) $value);
+
+    if (function_exists('mb_substr')) {
+        return mb_substr($value, 0, $max_length);
+    }
+
+    return substr($value, 0, $max_length);
+}
+
+function wc_product_license_normalize_plugin_inventory($plugins)
+{
+    if (is_string($plugins)) {
+        $decoded = json_decode($plugins, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            $plugins = $decoded;
+        } else {
+            $plugins = preg_split('/[\r\n,]+/', $plugins);
+        }
+    }
+
+    $plugins = is_array($plugins) ? $plugins : [];
+    $normalized = [];
+
+    foreach ($plugins as $plugin) {
+        if (is_array($plugin)) {
+            $name = '';
+
+            foreach (['name', 'label', 'slug', 'plugin'] as $key) {
+                if (!empty($plugin[$key])) {
+                    $name = wc_product_license_sanitize_tracking_text($plugin[$key], 120);
+                    break;
+                }
+            }
+
+            if ($name === '') {
+                continue;
+            }
+
+            $normalized[] = [
+                'name' => $name,
+                'version' => !empty($plugin['version']) ? wc_product_license_sanitize_tracking_text($plugin['version'], 50) : '',
+                'status' => !empty($plugin['status']) ? wc_product_license_sanitize_tracking_text($plugin['status'], 50) : 'active',
+            ];
+            continue;
+        }
+
+        $plugin = wc_product_license_sanitize_tracking_text($plugin, 120);
+        if ($plugin !== '') {
+            $normalized[] = [
+                'name' => $plugin,
+                'version' => '',
+                'status' => 'active',
+            ];
+        }
+    }
+
+    $normalized = array_values(array_unique(array_map(static function ($plugin) {
+        return wp_json_encode($plugin);
+    }, $normalized)));
+
+    return array_map(static function ($plugin_json) {
+        $decoded = json_decode($plugin_json, true);
+        return is_array($decoded) ? $decoded : [];
+    }, $normalized);
+}
+
+function wc_product_license_get_request_ip_address($request = null)
+{
+    $candidates = [];
+
+    if ($request instanceof WP_REST_Request) {
+        foreach (['X_FORWARDED_FOR', 'HTTP_X_FORWARDED_FOR', 'X_REAL_IP', 'REMOTE_ADDR'] as $key) {
+            $value = $request->get_header($key);
+            if ($value) {
+                $candidates[] = $value;
+            }
+        }
+    }
+
+    foreach (['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'REMOTE_ADDR'] as $key) {
+        if (!empty($_SERVER[$key])) {
+            $candidates[] = wp_unslash((string) $_SERVER[$key]);
+        }
+    }
+
+    foreach ($candidates as $candidate) {
+        $parts = array_map('trim', explode(',', (string) $candidate));
+        foreach ($parts as $part) {
+            $part = preg_replace('/[^0-9a-fA-F:\.]/', '', $part);
+            if ($part !== '' && filter_var($part, FILTER_VALIDATE_IP)) {
+                return $part;
+            }
+        }
+    }
+
+    return '';
+}
+
+function wc_product_license_get_activation_meta($activation)
+{
+    if (!$activation) {
+        return [];
+    }
+
+    $raw = is_array($activation) ? ($activation['site_meta'] ?? '') : ($activation->site_meta ?? '');
+    $decoded = is_string($raw) && $raw !== '' ? json_decode($raw, true) : [];
+
+    return is_array($decoded) ? $decoded : [];
+}
+
+function wc_product_license_get_activation_plugins($activation)
+{
+    $meta = wc_product_license_get_activation_meta($activation);
+    $plugins = isset($meta['installed_plugins']) ? $meta['installed_plugins'] : [];
+
+    return wc_product_license_normalize_plugin_inventory($plugins);
+}
+
+function wc_product_license_get_activation_days_active($activation)
+{
+    $first = is_array($activation) ? ($activation['first_requested_at'] ?? '') : ($activation->first_requested_at ?? '');
+    $last = is_array($activation) ? ($activation['deactivated_at'] ?? '') : ($activation->deactivated_at ?? '');
+    $status = is_array($activation) ? ($activation['status'] ?? '') : ($activation->status ?? '');
+
+    $start = strtotime((string) $first);
+    if (!$start) {
+        return 0;
+    }
+
+    $end = ($status === 'inactive' && !empty($last)) ? strtotime((string) $last) : current_time('timestamp');
+    if (!$end || $end < $start) {
+        $end = $start;
+    }
+
+    return max(0, (int) floor(($end - $start) / DAY_IN_SECONDS));
+}
+
+function wc_product_license_prepare_activation_telemetry($args = [], $existing = null)
+{
+    $existing_meta = wc_product_license_get_activation_meta($existing);
+    $meta = is_array($existing_meta) ? $existing_meta : [];
+
+    $columns = [
+        'product_name' => wc_product_license_sanitize_tracking_text($args['product_name'] ?? (is_object($existing) ? ($existing->product_name ?? '') : (is_array($existing) ? ($existing['product_name'] ?? '') : ''))),
+        'site_name' => wc_product_license_sanitize_tracking_text($args['site_name'] ?? $args['site_title'] ?? (is_object($existing) ? ($existing->site_name ?? '') : (is_array($existing) ? ($existing['site_name'] ?? '') : ''))),
+        'telemetry_source' => sanitize_key((string) ($args['telemetry_source'] ?? $args['source'] ?? (is_object($existing) ? ($existing->telemetry_source ?? 'activation') : (is_array($existing) ? ($existing['telemetry_source'] ?? 'activation') : 'activation')))),
+        'multisite' => array_key_exists('multisite', $args) ? wc_product_license_parse_tracking_flag($args['multisite']) : (int) (is_object($existing) ? ($existing->multisite ?? 0) : (is_array($existing) ? ($existing['multisite'] ?? 0) : 0)),
+        'wordpress_version' => wc_product_license_sanitize_tracking_text($args['wordpress_version'] ?? $args['wp_version'] ?? (is_object($existing) ? ($existing->wordpress_version ?? '') : (is_array($existing) ? ($existing['wordpress_version'] ?? '') : '')), 50),
+        'php_version' => wc_product_license_sanitize_tracking_text($args['php_version'] ?? (is_object($existing) ? ($existing->php_version ?? '') : (is_array($existing) ? ($existing['php_version'] ?? '') : '')), 50),
+        'mysql_version' => wc_product_license_sanitize_tracking_text($args['mysql_version'] ?? (is_object($existing) ? ($existing->mysql_version ?? '') : (is_array($existing) ? ($existing['mysql_version'] ?? '') : '')), 50),
+        'server_software' => wc_product_license_sanitize_tracking_text($args['server_software'] ?? (is_object($existing) ? ($existing->server_software ?? '') : (is_array($existing) ? ($existing['server_software'] ?? '') : ''))),
+        'environment_type' => wc_product_license_sanitize_tracking_text($args['environment_type'] ?? $args['environment'] ?? (is_object($existing) ? ($existing->environment_type ?? '') : (is_array($existing) ? ($existing['environment_type'] ?? '') : '')), 50),
+        'active_theme' => wc_product_license_sanitize_tracking_text($args['active_theme'] ?? $args['theme_name'] ?? (is_object($existing) ? ($existing->active_theme ?? '') : (is_array($existing) ? ($existing['active_theme'] ?? '') : ''))),
+        'active_theme_version' => wc_product_license_sanitize_tracking_text($args['active_theme_version'] ?? $args['theme_version'] ?? (is_object($existing) ? ($existing->active_theme_version ?? '') : (is_array($existing) ? ($existing['active_theme_version'] ?? '') : '')), 50),
+        'plugin_version' => wc_product_license_sanitize_tracking_text($args['plugin_version'] ?? (is_object($existing) ? ($existing->plugin_version ?? '') : (is_array($existing) ? ($existing['plugin_version'] ?? '') : '')), 50),
+        'last_ip' => wc_product_license_sanitize_tracking_text($args['last_ip'] ?? $args['ip_address'] ?? (is_object($existing) ? ($existing->last_ip ?? '') : (is_array($existing) ? ($existing['last_ip'] ?? '') : '')), 100),
+        'deactivation_reason' => wc_product_license_sanitize_tracking_text($args['deactivation_reason'] ?? (is_object($existing) ? ($existing->deactivation_reason ?? '') : (is_array($existing) ? ($existing['deactivation_reason'] ?? '') : ''))),
+    ];
+
+    foreach ([
+        'home_url',
+        'admin_email',
+        'locale',
+        'timezone',
+        'site_scope',
+        'site_owner',
+        'site_owner_type',
+        'license_channel',
+        'deactivation_note',
+        'server_os',
+        'wordpress_locale',
+        'site_icon',
+        'site_description',
+    ] as $meta_key) {
+        if (!empty($args[$meta_key])) {
+            $meta[$meta_key] = wc_product_license_sanitize_tracking_text($args[$meta_key], 255);
+        }
+    }
+
+    if (isset($args['home_url'])) {
+        $meta['home_url'] = esc_url_raw((string) $args['home_url']);
+    }
+
+    if (isset($args['admin_email'])) {
+        $meta['admin_email'] = sanitize_email((string) $args['admin_email']);
+    }
+
+    if (isset($args['site_icon'])) {
+        $meta['site_icon'] = esc_url_raw((string) $args['site_icon']);
+    }
+
+    if (array_key_exists('is_local', $args)) {
+        $meta['is_local'] = wc_product_license_parse_tracking_flag($args['is_local']);
+    }
+
+    if (array_key_exists('plugin_count', $args)) {
+        $meta['plugin_count'] = absint($args['plugin_count']);
+    }
+
+    $plugin_inventory = [];
+    if (array_key_exists('installed_plugins', $args)) {
+        $plugin_inventory = wc_product_license_normalize_plugin_inventory($args['installed_plugins']);
+    } elseif (array_key_exists('plugins', $args)) {
+        $plugin_inventory = wc_product_license_normalize_plugin_inventory($args['plugins']);
+    } elseif (!empty($meta['installed_plugins'])) {
+        $plugin_inventory = wc_product_license_normalize_plugin_inventory($meta['installed_plugins']);
+    }
+
+    if (!empty($plugin_inventory)) {
+        $meta['installed_plugins'] = $plugin_inventory;
+        $meta['plugin_count'] = count($plugin_inventory);
+    }
+
+    if (!empty($args['site_meta'])) {
+        $custom_meta = is_array($args['site_meta']) ? $args['site_meta'] : json_decode((string) $args['site_meta'], true);
+        if (is_array($custom_meta)) {
+            foreach ($custom_meta as $key => $value) {
+                if (!is_scalar($value)) {
+                    continue;
+                }
+
+                $meta[sanitize_key((string) $key)] = wc_product_license_sanitize_tracking_text($value, 255);
+            }
+        }
+    }
+
+    $meta['last_telemetry_at'] = current_time('mysql');
+
+    if (!empty($args['user_agent'])) {
+        $meta['user_agent'] = wc_product_license_sanitize_tracking_text($args['user_agent'], 255);
+    }
+
+    return [
+        'columns' => $columns,
+        'meta' => $meta,
+    ];
+}
+
+function wc_product_license_get_activation_record_for_context($context, $site_hash)
+{
+    global $wpdb;
+
+    $table = wc_product_license_get_table_name('activations');
+
+    if (!empty($context['license_id'])) {
+        return $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE license_id = %d AND site_hash = %s LIMIT 1",
+            absint($context['license_id']),
+            $site_hash
+        ));
+    }
+
+    if (!empty($context['license_key'])) {
+        return $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE license_key = %s AND site_hash = %s LIMIT 1",
+            (string) $context['license_key'],
+            $site_hash
+        ));
+    }
+
+    return $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM {$table} WHERE license_id = 0 AND site_hash = %s LIMIT 1",
+        $site_hash
+    ));
+}
+
+function wc_product_license_prepare_activation_context($license, $fallback = [])
+{
+    if (is_numeric($license)) {
+        global $wpdb;
+        $license = $wpdb->get_row($wpdb->prepare(
+            'SELECT * FROM ' . wc_product_license_get_table_name('licenses') . ' WHERE id = %d LIMIT 1',
+            absint($license)
+        ));
+    } elseif (is_string($license) && $license !== '') {
+        global $wpdb;
+        $license = $wpdb->get_row($wpdb->prepare(
+            'SELECT * FROM ' . wc_product_license_get_table_name('licenses') . ' WHERE license_key = %s LIMIT 1',
+            $license
+        ));
+    }
+
+    if (!$license) {
+        if (!is_array($fallback) || empty($fallback)) {
+            return null;
+        }
+
+        return [
+            'license_id' => absint($fallback['license_id'] ?? 0),
+            'license_key' => wc_product_license_sanitize_tracking_text($fallback['license_key'] ?? '', 255),
+            'product_id' => absint($fallback['product_id'] ?? 0),
+            'order_id' => absint($fallback['order_id'] ?? 0),
+            'user_id' => absint($fallback['user_id'] ?? 0),
+        ];
+    }
+
+    return [
+        'license_id' => is_array($license) ? absint($license['id'] ?? 0) : absint($license->id ?? 0),
+        'license_key' => is_array($license) ? (string) ($license['license_key'] ?? '') : (string) ($license->license_key ?? ''),
+        'product_id' => is_array($license) ? absint($license['product_id'] ?? 0) : absint($license->product_id ?? 0),
+        'order_id' => is_array($license) ? absint($license['order_id'] ?? 0) : absint($license->order_id ?? 0),
+        'user_id' => is_array($license) ? absint($license['user_id'] ?? 0) : absint($license->user_id ?? 0),
+    ];
+}
+
+function wc_product_license_touch_activation_record($license, $site_url, $args = [])
+{
+    global $wpdb;
+
+    $context = wc_product_license_prepare_activation_context($license, isset($args['context']) && is_array($args['context']) ? $args['context'] : []);
+    $site_url = wc_product_license_sanitize_site_identifier($site_url);
+    $site_hash = wc_product_license_get_activation_site_hash($site_url);
+
+    if (!$context || $site_url === '' || $site_hash === '') {
+        return 0;
+    }
+
+    $table = wc_product_license_get_table_name('activations');
+    $timestamp = !empty($args['timestamp']) ? sanitize_text_field((string) $args['timestamp']) : current_time('mysql');
+    $first_requested_at = !empty($args['first_requested_at']) ? sanitize_text_field((string) $args['first_requested_at']) : $timestamp;
+    $request_increment = array_key_exists('increment_request_count', $args) ? max(0, absint($args['increment_request_count'])) : 1;
+    $existing = wc_product_license_get_activation_record_for_context($context, $site_hash);
+    $telemetry = wc_product_license_prepare_activation_telemetry($args, $existing);
+    $telemetry_columns = $telemetry['columns'];
+    $site_meta_json = wp_json_encode($telemetry['meta']);
+    if ($existing) {
+        $existing_first = !empty($existing->first_requested_at) ? (string) $existing->first_requested_at : $first_requested_at;
+        if (strtotime($first_requested_at) && strtotime($existing_first) && strtotime($first_requested_at) < strtotime($existing_first)) {
+            $existing_first = $first_requested_at;
+        }
+
+        $wpdb->update(
+            $table,
+            [
+                'license_key' => $context['license_key'],
+                'product_id' => $context['product_id'],
+                'order_id' => $context['order_id'],
+                'user_id' => $context['user_id'],
+                'site_url' => $site_url,
+                'status' => 'active',
+                'product_name' => $telemetry_columns['product_name'],
+                'site_name' => $telemetry_columns['site_name'],
+                'telemetry_source' => $telemetry_columns['telemetry_source'] !== '' ? $telemetry_columns['telemetry_source'] : 'activation',
+                'multisite' => $telemetry_columns['multisite'],
+                'wordpress_version' => $telemetry_columns['wordpress_version'],
+                'php_version' => $telemetry_columns['php_version'],
+                'mysql_version' => $telemetry_columns['mysql_version'],
+                'server_software' => $telemetry_columns['server_software'],
+                'environment_type' => $telemetry_columns['environment_type'],
+                'active_theme' => $telemetry_columns['active_theme'],
+                'active_theme_version' => $telemetry_columns['active_theme_version'],
+                'plugin_version' => $telemetry_columns['plugin_version'],
+                'last_ip' => $telemetry_columns['last_ip'],
+                'deactivation_reason' => '',
+                'site_meta' => $site_meta_json,
+                'request_count' => max(1, (int) $existing->request_count + $request_increment),
+                'first_requested_at' => $existing_first,
+                'last_requested_at' => $timestamp,
+                'deactivated_at' => null,
+                'updated_at' => current_time('mysql'),
+            ],
+            ['id' => (int) $existing->id]
+        );
+
+        return (int) $existing->id;
+    }
+
+    $wpdb->insert(
+        $table,
+        [
+            'license_id' => $context['license_id'],
+            'license_key' => $context['license_key'],
+            'product_id' => $context['product_id'],
+            'order_id' => $context['order_id'],
+            'user_id' => $context['user_id'],
+            'site_url' => $site_url,
+            'site_hash' => $site_hash,
+            'status' => 'active',
+            'product_name' => $telemetry_columns['product_name'],
+            'site_name' => $telemetry_columns['site_name'],
+            'telemetry_source' => $telemetry_columns['telemetry_source'] !== '' ? $telemetry_columns['telemetry_source'] : 'activation',
+            'multisite' => $telemetry_columns['multisite'],
+            'wordpress_version' => $telemetry_columns['wordpress_version'],
+            'php_version' => $telemetry_columns['php_version'],
+            'mysql_version' => $telemetry_columns['mysql_version'],
+            'server_software' => $telemetry_columns['server_software'],
+            'environment_type' => $telemetry_columns['environment_type'],
+            'active_theme' => $telemetry_columns['active_theme'],
+            'active_theme_version' => $telemetry_columns['active_theme_version'],
+            'plugin_version' => $telemetry_columns['plugin_version'],
+            'last_ip' => $telemetry_columns['last_ip'],
+            'deactivation_reason' => '',
+            'site_meta' => $site_meta_json,
+            'request_count' => max(1, $request_increment),
+            'first_requested_at' => $first_requested_at,
+            'last_requested_at' => $timestamp,
+            'deactivated_at' => null,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ]
+    );
+
+    return (int) $wpdb->insert_id;
+}
+
+function wc_product_license_mark_activation_inactive($license, $site_url, $args = [])
+{
+    global $wpdb;
+
+    $context = wc_product_license_prepare_activation_context($license, isset($args['context']) && is_array($args['context']) ? $args['context'] : []);
+    $site_url = wc_product_license_sanitize_site_identifier($site_url);
+    $site_hash = wc_product_license_get_activation_site_hash($site_url);
+
+    if (!$context || $site_url === '' || $site_hash === '') {
+        return 0;
+    }
+
+    $table = wc_product_license_get_table_name('activations');
+    $timestamp = !empty($args['timestamp']) ? sanitize_text_field((string) $args['timestamp']) : current_time('mysql');
+    $existing = wc_product_license_get_activation_record_for_context($context, $site_hash);
+    $telemetry = wc_product_license_prepare_activation_telemetry($args, $existing);
+    $telemetry_columns = $telemetry['columns'];
+    $site_meta_json = wp_json_encode($telemetry['meta']);
+    $deactivation_reason = $telemetry_columns['deactivation_reason'] !== '' ? $telemetry_columns['deactivation_reason'] : (is_object($existing) ? (string) ($existing->deactivation_reason ?? '') : '');
+    if ($existing) {
+        $wpdb->update(
+            $table,
+            [
+                'license_key' => $context['license_key'],
+                'product_id' => $context['product_id'],
+                'order_id' => $context['order_id'],
+                'user_id' => $context['user_id'],
+                'site_url' => $site_url,
+                'status' => 'inactive',
+                'product_name' => $telemetry_columns['product_name'],
+                'site_name' => $telemetry_columns['site_name'],
+                'telemetry_source' => $telemetry_columns['telemetry_source'] !== '' ? $telemetry_columns['telemetry_source'] : 'deactivation',
+                'multisite' => $telemetry_columns['multisite'],
+                'wordpress_version' => $telemetry_columns['wordpress_version'],
+                'php_version' => $telemetry_columns['php_version'],
+                'mysql_version' => $telemetry_columns['mysql_version'],
+                'server_software' => $telemetry_columns['server_software'],
+                'environment_type' => $telemetry_columns['environment_type'],
+                'active_theme' => $telemetry_columns['active_theme'],
+                'active_theme_version' => $telemetry_columns['active_theme_version'],
+                'plugin_version' => $telemetry_columns['plugin_version'],
+                'last_ip' => $telemetry_columns['last_ip'],
+                'deactivation_reason' => $deactivation_reason,
+                'site_meta' => $site_meta_json,
+                'deactivated_at' => $timestamp,
+                'updated_at' => current_time('mysql'),
+            ],
+            ['id' => (int) $existing->id]
+        );
+
+        return (int) $existing->id;
+    }
+
+    $first_requested_at = !empty($args['first_requested_at']) ? sanitize_text_field((string) $args['first_requested_at']) : $timestamp;
+
+    $wpdb->insert(
+        $table,
+        [
+            'license_id' => $context['license_id'],
+            'license_key' => $context['license_key'],
+            'product_id' => $context['product_id'],
+            'order_id' => $context['order_id'],
+            'user_id' => $context['user_id'],
+            'site_url' => $site_url,
+            'site_hash' => $site_hash,
+            'status' => 'inactive',
+            'product_name' => $telemetry_columns['product_name'],
+            'site_name' => $telemetry_columns['site_name'],
+            'telemetry_source' => $telemetry_columns['telemetry_source'] !== '' ? $telemetry_columns['telemetry_source'] : 'deactivation',
+            'multisite' => $telemetry_columns['multisite'],
+            'wordpress_version' => $telemetry_columns['wordpress_version'],
+            'php_version' => $telemetry_columns['php_version'],
+            'mysql_version' => $telemetry_columns['mysql_version'],
+            'server_software' => $telemetry_columns['server_software'],
+            'environment_type' => $telemetry_columns['environment_type'],
+            'active_theme' => $telemetry_columns['active_theme'],
+            'active_theme_version' => $telemetry_columns['active_theme_version'],
+            'plugin_version' => $telemetry_columns['plugin_version'],
+            'last_ip' => $telemetry_columns['last_ip'],
+            'deactivation_reason' => $deactivation_reason,
+            'site_meta' => $site_meta_json,
+            'request_count' => 1,
+            'first_requested_at' => $first_requested_at,
+            'last_requested_at' => $first_requested_at,
+            'deactivated_at' => $timestamp,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ]
+    );
+
+    return (int) $wpdb->insert_id;
+}
+
+function wc_product_license_mark_all_activations_inactive($license, $site_urls, $args = [])
+{
+    $site_urls = is_array($site_urls) ? $site_urls : [];
+
+    foreach ($site_urls as $site_url) {
+        wc_product_license_mark_activation_inactive($license, $site_url, $args);
+    }
+}
+
+function wc_product_license_sync_activation_records_with_license($license)
+{
+    global $wpdb;
+
+    $context = wc_product_license_prepare_activation_context($license);
+    if (!$context || $context['license_id'] < 1) {
+        return;
+    }
+
+    $product_name = '';
+    if (!empty($context['product_id'])) {
+        $product = wc_get_product((int) $context['product_id']);
+        if ($product) {
+            $product_name = $product->get_name();
+        }
+    }
+
+    $wpdb->update(
+        wc_product_license_get_table_name('activations'),
+        [
+            'license_key' => $context['license_key'],
+            'product_id' => $context['product_id'],
+            'order_id' => $context['order_id'],
+            'user_id' => $context['user_id'],
+            'product_name' => $product_name,
+            'updated_at' => current_time('mysql'),
+        ],
+        ['license_id' => $context['license_id']],
+        ['%s', '%d', '%d', '%d', '%s', '%s'],
+        ['%d']
+    );
+}
+
+function wc_product_license_delete_activation_records($license)
+{
+    global $wpdb;
+
+    $context = wc_product_license_prepare_activation_context($license);
+    if (!$context || $context['license_id'] < 1) {
+        return;
+    }
+
+    $wpdb->delete(
+        wc_product_license_get_table_name('activations'),
+        ['license_id' => $context['license_id']],
+        ['%d']
+    );
+}
+
+function wc_product_license_backfill_activation_records()
+{
+    global $wpdb;
+
+    $activity_logs = $wpdb->get_results(
+        "SELECT license_id, license_key, site_url, event_type, created_at FROM " . wc_product_license_get_table_name('activity') . " WHERE site_url != '' AND event_type IN ('site_activated', 'site_deactivated') ORDER BY created_at ASC, id ASC"
+    );
+    $activity_logs = is_array($activity_logs) ? $activity_logs : [];
+
+    foreach ($activity_logs as $log) {
+        $license_reference = !empty($log->license_id) ? absint($log->license_id) : (string) $log->license_key;
+        if ((string) $log->event_type === 'site_deactivated') {
+            wc_product_license_mark_activation_inactive($license_reference, $log->site_url, [
+                'timestamp' => (string) $log->created_at,
+                'first_requested_at' => (string) $log->created_at,
+            ]);
+            continue;
+        }
+
+        wc_product_license_touch_activation_record($license_reference, $log->site_url, [
+            'timestamp' => (string) $log->created_at,
+            'first_requested_at' => (string) $log->created_at,
+            'increment_request_count' => 0,
+        ]);
+    }
+
+    $licenses = $wpdb->get_results('SELECT * FROM ' . wc_product_license_get_table_name('licenses'));
+    $licenses = is_array($licenses) ? $licenses : [];
+
+    foreach ($licenses as $license) {
+        wc_product_license_sync_activation_records_with_license($license);
+
+        $active_sites = maybe_unserialize($license->active_sites);
+        $active_sites = is_array($active_sites) ? $active_sites : [];
+
+        foreach ($active_sites as $site_url => $activation_date) {
+            $activation_date = !empty($activation_date) ? (string) $activation_date : current_time('mysql');
+            wc_product_license_touch_activation_record($license, $site_url, [
+                'timestamp' => $activation_date,
+                'first_requested_at' => $activation_date,
+                'increment_request_count' => 0,
+            ]);
+        }
+    }
+}
+
+function wc_product_license_backfill_tracking_site_records()
+{
+    $activation_tracking = get_option('wc_license_activation_tracking', []);
+    $deactivation_tracking = get_option('wc_license_deactivation_tracking', []);
+
+    $activation_tracking = is_array($activation_tracking) ? $activation_tracking : [];
+    $deactivation_tracking = is_array($deactivation_tracking) ? $deactivation_tracking : [];
+
+    foreach ($activation_tracking as $site_url => $tracking) {
+        if (!is_array($tracking)) {
+            continue;
+        }
+
+        $site_url = !empty($tracking['site_url']) ? $tracking['site_url'] : $site_url;
+        if (!$site_url) {
+            continue;
+        }
+
+        wc_product_license_touch_activation_record(null, $site_url, [
+            'context' => [
+                'license_id' => 0,
+                'license_key' => !empty($tracking['license_key']) ? $tracking['license_key'] : '',
+                'product_id' => !empty($tracking['product_id']) ? absint($tracking['product_id']) : 0,
+                'order_id' => 0,
+                'user_id' => 0,
+            ],
+            'timestamp' => !empty($tracking['timestamp']) ? $tracking['timestamp'] : current_time('mysql'),
+            'first_requested_at' => !empty($tracking['timestamp']) ? $tracking['timestamp'] : current_time('mysql'),
+            'increment_request_count' => 0,
+            'product_name' => $tracking['product_name'] ?? '',
+            'site_name' => $tracking['site_name'] ?? '',
+            'multisite' => $tracking['multisite'] ?? 'no',
+            'wordpress_version' => $tracking['wordpress_version'] ?? '',
+            'php_version' => $tracking['php_version'] ?? '',
+            'mysql_version' => $tracking['mysql_version'] ?? '',
+            'server_software' => $tracking['server_software'] ?? '',
+            'environment_type' => $tracking['environment_type'] ?? '',
+            'active_theme' => $tracking['active_theme'] ?? '',
+            'active_theme_version' => $tracking['active_theme_version'] ?? '',
+            'plugin_version' => $tracking['plugin_version'] ?? '',
+            'installed_plugins' => $tracking['installed_plugins'] ?? [],
+            'telemetry_source' => 'tracking',
+        ]);
+    }
+
+    foreach ($deactivation_tracking as $site_url => $tracking) {
+        if (!is_array($tracking)) {
+            continue;
+        }
+
+        $site_url = !empty($tracking['site_url']) ? $tracking['site_url'] : $site_url;
+        if (!$site_url) {
+            continue;
+        }
+
+        wc_product_license_mark_activation_inactive(null, $site_url, [
+            'context' => [
+                'license_id' => 0,
+                'license_key' => !empty($tracking['license_key']) ? $tracking['license_key'] : '',
+                'product_id' => !empty($tracking['product_id']) ? absint($tracking['product_id']) : 0,
+                'order_id' => 0,
+                'user_id' => 0,
+            ],
+            'timestamp' => !empty($tracking['timestamp']) ? $tracking['timestamp'] : current_time('mysql'),
+            'first_requested_at' => !empty($tracking['timestamp']) ? $tracking['timestamp'] : current_time('mysql'),
+            'product_name' => $tracking['product_name'] ?? '',
+            'site_name' => $tracking['site_name'] ?? '',
+            'multisite' => $tracking['multisite'] ?? 'no',
+            'wordpress_version' => $tracking['wordpress_version'] ?? '',
+            'php_version' => $tracking['php_version'] ?? '',
+            'mysql_version' => $tracking['mysql_version'] ?? '',
+            'server_software' => $tracking['server_software'] ?? '',
+            'environment_type' => $tracking['environment_type'] ?? '',
+            'active_theme' => $tracking['active_theme'] ?? '',
+            'active_theme_version' => $tracking['active_theme_version'] ?? '',
+            'plugin_version' => $tracking['plugin_version'] ?? '',
+            'installed_plugins' => $tracking['installed_plugins'] ?? [],
+            'deactivation_reason' => $tracking['deactivation_reason'] ?? '',
+            'telemetry_source' => 'tracking',
+        ]);
+    }
+}
+
+function wc_product_license_maybe_backfill_tracking_site_records()
+{
+    global $wpdb;
+
+    static $did_run = false;
+
+    if ($did_run) {
+        return;
+    }
+
+    $did_run = true;
+
+    $target_version = (string) WC_PRODUCT_LICENSE_DB_VERSION;
+    $backfill_version = (string) get_option('wc_product_license_tracking_backfill_version', '');
+    $activations_table = wc_product_license_get_table_name('activations');
+
+    if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $activations_table)) !== $activations_table) {
+        return;
+    }
+
+    if ($backfill_version === $target_version) {
+        return;
+    }
+
+    wc_product_license_backfill_tracking_site_records();
+
+    $records = $wpdb->get_results("SELECT id, product_id, product_name FROM {$activations_table}");
+    $records = is_array($records) ? $records : [];
+
+    foreach ($records as $record) {
+        if ((int) $record->product_id < 1 || !empty($record->product_name)) {
+            continue;
+        }
+
+        $product = wc_get_product((int) $record->product_id);
+        if (!$product) {
+            continue;
+        }
+
+        $wpdb->update(
+            $activations_table,
+            [
+                'product_name' => $product->get_name(),
+                'updated_at' => current_time('mysql'),
+            ],
+            ['id' => (int) $record->id],
+            ['%s', '%s'],
+            ['%d']
+        );
+    }
+
+    update_option('wc_product_license_tracking_backfill_version', $target_version);
 }
 
 function wc_product_license_get_plugin_status()
@@ -2136,7 +3235,10 @@ class WC_Product_License_Manager
         $active_sites = maybe_unserialize($existing_license->active_sites) ?: [];
         $sites_allowed = wc_product_license_normalize_sites_allowed($selected_variation['sites'] ?? 1, !empty($selected_variation['is_unlimited_sites']));
         $expires_at = $this->calculate_license_expiry_date($selected_variation);
-        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $table_name = wc_product_license_get_table_name('licenses');
+        $previous_product_id = absint($existing_license->product_id);
+        $previous_sites_allowed = (int) $existing_license->sites_allowed;
+        $previous_expires_at = (string) $existing_license->expires_at;
 
         $updated = $wpdb->update(
             $table_name,
@@ -2154,6 +3256,36 @@ class WC_Product_License_Manager
             ],
             ['license_key' => $license_key]
         );
+
+        if ($updated !== false) {
+            $existing_license->product_id = $product_id;
+            $existing_license->order_id = $order->get_id();
+            $existing_license->user_id = $order->get_user_id();
+            $existing_license->license_key = $license_key;
+            wc_product_license_sync_activation_records_with_license($existing_license);
+
+            wc_product_license_log_event(
+                $existing_license,
+                'license_upgraded',
+                sprintf(
+                    __('License upgraded from order #%d to package %s.', 'wc-product-license'),
+                    $order->get_id(),
+                    isset($selected_variation['title']) ? (string) $selected_variation['title'] : __('Default package', 'wc-product-license')
+                ),
+                [
+                    'source' => 'order',
+                    'details' => [
+                        'order_id' => $order->get_id(),
+                        'previous_product_id' => $previous_product_id,
+                        'new_product_id' => absint($product_id),
+                        'previous_sites_allowed' => $previous_sites_allowed,
+                        'new_sites_allowed' => $sites_allowed,
+                        'previous_expires_at' => $previous_expires_at,
+                        'new_expires_at' => (string) $expires_at,
+                    ],
+                ]
+            );
+        }
 
         return $updated !== false;
     }
@@ -2244,7 +3376,7 @@ class WC_Product_License_Manager
     {
         global $wpdb;
 
-        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $table_name = wc_product_license_get_table_name('licenses');
 
         // Insert data
         $wpdb->insert(
@@ -2264,7 +3396,47 @@ class WC_Product_License_Manager
             ]
         );
 
-        return $wpdb->insert_id;
+        $license_id = (int) $wpdb->insert_id;
+
+        if ($license_id > 0) {
+            wc_product_license_sync_activation_records_with_license([
+                'id' => $license_id,
+                'license_key' => $license_data['key'],
+                'product_id' => $license_data['product_id'],
+                'order_id' => $license_data['order_id'],
+                'user_id' => $license_data['user_id'],
+            ]);
+
+            $package_name = isset($license_data['package_name']) ? (string) $license_data['package_name'] : '';
+            $message = !empty($license_data['order_id'])
+                ? sprintf(__('License issued from order #%d.', 'wc-product-license'), absint($license_data['order_id']))
+                : __('License record created.', 'wc-product-license');
+
+            if ($package_name !== '') {
+                $message .= ' ' . sprintf(__('Package: %s.', 'wc-product-license'), $package_name);
+            }
+
+            wc_product_license_log_event(
+                [
+                    'id' => $license_id,
+                    'license_key' => $license_data['key'],
+                ],
+                'license_created',
+                $message,
+                [
+                    'source' => !empty($license_data['order_id']) ? 'order' : 'system',
+                    'details' => [
+                        'order_id' => absint($license_data['order_id']),
+                        'product_id' => absint($license_data['product_id']),
+                        'package_name' => $package_name,
+                        'key_source' => isset($license_data['key_source']) ? (string) $license_data['key_source'] : '',
+                        'expires_at' => isset($license_data['expires_at']) ? (string) $license_data['expires_at'] : '',
+                    ],
+                ]
+            );
+        }
+
+        return $license_id;
     }
 
     /**
@@ -2618,7 +3790,8 @@ class WC_Product_License_Manager
 
         // Clear all active sites
         global $wpdb;
-        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $table_name = wc_product_license_get_table_name('licenses');
+        $removed_sites = maybe_unserialize($license->active_sites) ?: [];
         $wpdb->update(
             $table_name,
             [
@@ -2626,6 +3799,22 @@ class WC_Product_License_Manager
                 'active_sites' => maybe_serialize([])
             ],
             ['license_key' => $license_key]
+        );
+        wc_product_license_mark_all_activations_inactive($license, array_keys($removed_sites), [
+            'timestamp' => current_time('mysql'),
+        ]);
+
+        wc_product_license_log_event(
+            $license,
+            'activations_reset',
+            __('All site activations were cleared from the customer portal.', 'wc-product-license'),
+            [
+                'source' => 'customer_ajax',
+                'actor_id' => get_current_user_id(),
+                'details' => [
+                    'removed_site_count' => count($removed_sites),
+                ],
+            ]
         );
 
         wp_send_json_success([
@@ -2663,7 +3852,19 @@ class WC_Product_License_Manager
 
         // Delete the license
         global $wpdb;
-        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $table_name = wc_product_license_get_table_name('licenses');
+
+        wc_product_license_log_event(
+            $license,
+            'license_deleted',
+            __('Expired license deleted from the customer portal.', 'wc-product-license'),
+            [
+                'source' => 'customer_ajax',
+                'actor_id' => get_current_user_id(),
+            ]
+        );
+
+        wc_product_license_delete_activation_records($license);
         $wpdb->delete($table_name, ['license_key' => $license_key]);
 
         wp_send_json_success([
@@ -2985,6 +4186,170 @@ class WC_Product_License_Manager
         return $default;
     }
 
+    private function get_license_by_id($license_id)
+    {
+        global $wpdb;
+
+        $license_id = absint($license_id);
+        if ($license_id < 1) {
+            return null;
+        }
+
+        return $wpdb->get_row($wpdb->prepare(
+            'SELECT * FROM ' . wc_product_license_get_table_name('licenses') . ' WHERE id = %d LIMIT 1',
+            $license_id
+        ));
+    }
+
+    private function get_tracking_license_context_from_params($params)
+    {
+        $license_key = isset($params['license_key']) ? sanitize_text_field((string) $params['license_key']) : '';
+        $license_id = isset($params['license_id']) ? absint($params['license_id']) : 0;
+        $license = null;
+
+        if ($license_key !== '') {
+            $license = $this->get_license_by_key($license_key);
+        } elseif ($license_id > 0) {
+            $license = $this->get_license_by_id($license_id);
+        }
+
+        return [
+            'license' => $license,
+            'context' => [
+                'license_id' => $license ? absint($license->id) : $license_id,
+                'license_key' => $license ? (string) $license->license_key : $license_key,
+                'product_id' => $license ? absint($license->product_id) : (isset($params['product_id']) ? absint($params['product_id']) : 0),
+                'order_id' => $license ? absint($license->order_id) : (isset($params['order_id']) ? absint($params['order_id']) : 0),
+                'user_id' => $license ? absint($license->user_id) : (isset($params['user_id']) ? absint($params['user_id']) : 0),
+            ],
+        ];
+    }
+
+    private function build_tracking_payload($params, $request = null, $source = 'tracking')
+    {
+        return [
+            'product_name' => isset($params['product_name']) ? sanitize_text_field((string) $params['product_name']) : '',
+            'site_name' => isset($params['site_name']) ? sanitize_text_field((string) $params['site_name']) : (isset($params['site_title']) ? sanitize_text_field((string) $params['site_title']) : ''),
+            'multisite' => $params['multisite'] ?? 'no',
+            'wordpress_version' => isset($params['wordpress_version']) ? sanitize_text_field((string) $params['wordpress_version']) : (isset($params['wp_version']) ? sanitize_text_field((string) $params['wp_version']) : ''),
+            'php_version' => isset($params['php_version']) ? sanitize_text_field((string) $params['php_version']) : '',
+            'mysql_version' => isset($params['mysql_version']) ? sanitize_text_field((string) $params['mysql_version']) : '',
+            'server_software' => isset($params['server_software']) ? sanitize_text_field((string) $params['server_software']) : '',
+            'environment_type' => isset($params['environment_type']) ? sanitize_text_field((string) $params['environment_type']) : (isset($params['environment']) ? sanitize_text_field((string) $params['environment']) : ''),
+            'active_theme' => isset($params['active_theme']) ? sanitize_text_field((string) $params['active_theme']) : (isset($params['theme_name']) ? sanitize_text_field((string) $params['theme_name']) : ''),
+            'active_theme_version' => isset($params['active_theme_version']) ? sanitize_text_field((string) $params['active_theme_version']) : (isset($params['theme_version']) ? sanitize_text_field((string) $params['theme_version']) : ''),
+            'plugin_version' => isset($params['plugin_version']) ? sanitize_text_field((string) $params['plugin_version']) : '',
+            'installed_plugins' => $params['installed_plugins'] ?? ($params['plugins'] ?? []),
+            'home_url' => isset($params['home_url']) ? esc_url_raw((string) $params['home_url']) : '',
+            'admin_email' => isset($params['admin_email']) ? sanitize_email((string) $params['admin_email']) : '',
+            'locale' => isset($params['locale']) ? sanitize_text_field((string) $params['locale']) : '',
+            'wordpress_locale' => isset($params['wordpress_locale']) ? sanitize_text_field((string) $params['wordpress_locale']) : (isset($params['wp_locale']) ? sanitize_text_field((string) $params['wp_locale']) : ''),
+            'timezone' => isset($params['timezone']) ? sanitize_text_field((string) $params['timezone']) : '',
+            'server_os' => isset($params['server_os']) ? sanitize_text_field((string) $params['server_os']) : '',
+            'site_icon' => isset($params['site_icon']) ? esc_url_raw((string) $params['site_icon']) : (isset($params['site_icon_url']) ? esc_url_raw((string) $params['site_icon_url']) : ''),
+            'site_description' => isset($params['site_description']) ? sanitize_text_field((string) $params['site_description']) : (isset($params['tagline']) ? sanitize_text_field((string) $params['tagline']) : ''),
+            'site_scope' => isset($params['site_scope']) ? sanitize_text_field((string) $params['site_scope']) : '',
+            'site_owner' => isset($params['site_owner']) ? sanitize_text_field((string) $params['site_owner']) : '',
+            'site_owner_type' => isset($params['site_owner_type']) ? sanitize_text_field((string) $params['site_owner_type']) : '',
+            'license_channel' => isset($params['license_channel']) ? sanitize_text_field((string) $params['license_channel']) : '',
+            'deactivation_note' => isset($params['deactivation_note']) ? sanitize_text_field((string) $params['deactivation_note']) : '',
+            'deactivation_reason' => isset($params['deactivation_reason']) ? sanitize_text_field((string) $params['deactivation_reason']) : '',
+            'is_local' => $params['is_local'] ?? '',
+            'plugin_count' => isset($params['plugin_count']) ? absint($params['plugin_count']) : 0,
+            'site_meta' => isset($params['site_meta']) ? $params['site_meta'] : [],
+            'telemetry_source' => $source,
+            'last_ip' => wc_product_license_get_request_ip_address($request),
+            'user_agent' => !empty($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_USER_AGENT'])) : '',
+        ];
+    }
+
+    private function get_license_site_records($license_id)
+    {
+        global $wpdb;
+
+        $license_id = absint($license_id);
+        if ($license_id < 1) {
+            return [];
+        }
+
+        $records = $wpdb->get_results($wpdb->prepare(
+            'SELECT * FROM ' . wc_product_license_get_table_name('activations') . ' WHERE license_id = %d ORDER BY last_requested_at DESC, id DESC',
+            $license_id
+        ));
+
+        return is_array($records) ? $records : [];
+    }
+
+    private function get_activation_record_by_id($activation_id)
+    {
+        global $wpdb;
+
+        $activation_id = absint($activation_id);
+        if ($activation_id < 1) {
+            return null;
+        }
+
+        return $wpdb->get_row($wpdb->prepare(
+            'SELECT * FROM ' . wc_product_license_get_table_name('activations') . ' WHERE id = %d LIMIT 1',
+            $activation_id
+        ));
+    }
+
+    private function format_site_record_response($record)
+    {
+        $meta = wc_product_license_get_activation_meta($record);
+        $plugins = wc_product_license_get_activation_plugins($record);
+        $site_url = (string) $record->site_url;
+
+        return [
+            'id' => absint($record->id),
+            'license_id' => absint($record->license_id),
+            'license_key' => (string) $record->license_key,
+            'product_id' => absint($record->product_id),
+            'site_url' => $site_url,
+            'site_name' => (string) $record->site_name,
+            'site_host' => (string) wp_parse_url($site_url, PHP_URL_HOST),
+            'site_path' => (string) wp_parse_url($site_url, PHP_URL_PATH),
+            'status' => (string) $record->status,
+            'product_name' => (string) $record->product_name,
+            'multisite' => (int) $record->multisite === 1,
+            'wordpress_version' => (string) $record->wordpress_version,
+            'php_version' => (string) $record->php_version,
+            'mysql_version' => (string) $record->mysql_version,
+            'server_software' => (string) $record->server_software,
+            'environment_type' => (string) $record->environment_type,
+            'active_theme' => (string) $record->active_theme,
+            'active_theme_version' => (string) $record->active_theme_version,
+            'plugin_version' => (string) $record->plugin_version,
+            'last_ip' => (string) $record->last_ip,
+            'deactivation_reason' => (string) $record->deactivation_reason,
+            'days_active' => wc_product_license_get_activation_days_active($record),
+            'request_count' => absint($record->request_count),
+            'first_requested_at' => (string) $record->first_requested_at,
+            'last_requested_at' => (string) $record->last_requested_at,
+            'deactivated_at' => (string) $record->deactivated_at,
+            'telemetry_source' => (string) $record->telemetry_source,
+            'home_url' => isset($meta['home_url']) ? (string) $meta['home_url'] : '',
+            'admin_email' => isset($meta['admin_email']) ? (string) $meta['admin_email'] : '',
+            'locale' => isset($meta['locale']) ? (string) $meta['locale'] : '',
+            'wordpress_locale' => isset($meta['wordpress_locale']) ? (string) $meta['wordpress_locale'] : '',
+            'timezone' => isset($meta['timezone']) ? (string) $meta['timezone'] : '',
+            'server_os' => isset($meta['server_os']) ? (string) $meta['server_os'] : '',
+            'site_icon' => isset($meta['site_icon']) ? (string) $meta['site_icon'] : '',
+            'site_description' => isset($meta['site_description']) ? (string) $meta['site_description'] : '',
+            'site_scope' => isset($meta['site_scope']) ? (string) $meta['site_scope'] : '',
+            'site_owner' => isset($meta['site_owner']) ? (string) $meta['site_owner'] : '',
+            'site_owner_type' => isset($meta['site_owner_type']) ? (string) $meta['site_owner_type'] : '',
+            'license_channel' => isset($meta['license_channel']) ? (string) $meta['license_channel'] : '',
+            'is_local' => !empty($meta['is_local']),
+            'last_telemetry_at' => isset($meta['last_telemetry_at']) ? (string) $meta['last_telemetry_at'] : '',
+            'user_agent' => isset($meta['user_agent']) ? (string) $meta['user_agent'] : '',
+            'plugins' => $plugins,
+            'plugin_count' => count($plugins),
+            'meta' => $meta,
+        ];
+    }
+
     private function get_release_download_payload($product, $download_id)
     {
         $download_options = $this->get_download_options_from_product($product);
@@ -3096,6 +4461,8 @@ class WC_Product_License_Manager
         $active_release = $requested_channel === 'beta' ? $beta_release : $stable_release;
         $allowed_download_ids = $selected_variation ? $this->get_license_variation_download_ids($selected_variation, $product) : [];
         $allowed_downloads = [];
+        $site_records = $this->get_license_site_records((int) $license->id);
+        $site_records = array_map([$this, 'format_site_record_response'], $site_records);
 
         if ($product) {
             $download_options = $this->get_download_options_from_product($product);
@@ -3119,6 +4486,7 @@ class WC_Product_License_Manager
             'is_unlimited_sites' => wc_product_license_is_unlimited_sites($sites_allowed),
             'expires_at' => $license->expires_at,
             'active_sites' => $active_sites,
+            'site_records' => $site_records,
             'package' => [
                 'name' => $selected_variation ? $selected_variation['title'] : '',
                 'index' => $selected_variation ? $selected_variation['index'] : '',
@@ -3172,7 +4540,7 @@ class WC_Product_License_Manager
 
         // Update license in database
         global $wpdb;
-        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $table_name = wc_product_license_get_table_name('licenses');
         $wpdb->update(
             $table_name,
             [
@@ -3180,6 +4548,25 @@ class WC_Product_License_Manager
                 'active_sites' => maybe_serialize($active_sites)
             ],
             ['license_key' => $license_key]
+        );
+        wc_product_license_touch_activation_record($license, $site_url, [
+            'timestamp' => (string) $active_sites[$site_url],
+            'first_requested_at' => (string) $active_sites[$site_url],
+        ]);
+
+        wc_product_license_log_event(
+            $license,
+            'site_activated',
+            sprintf(__('Site activated: %s', 'wc-product-license'), $site_url),
+            [
+                'source' => 'customer_ajax',
+                'actor_id' => get_current_user_id(),
+                'site_url' => $site_url,
+                'details' => [
+                    'sites_active' => count($active_sites),
+                    'sites_allowed' => (int) $license->sites_allowed,
+                ],
+            ]
         );
 
         wp_send_json_success([
@@ -3220,7 +4607,7 @@ class WC_Product_License_Manager
 
         // Update license in database
         global $wpdb;
-        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $table_name = wc_product_license_get_table_name('licenses');
         $wpdb->update(
             $table_name,
             [
@@ -3228,6 +4615,24 @@ class WC_Product_License_Manager
                 'active_sites' => maybe_serialize($active_sites)
             ],
             ['license_key' => $license_key]
+        );
+        wc_product_license_mark_activation_inactive($license, $site_url, [
+            'timestamp' => current_time('mysql'),
+        ]);
+
+        wc_product_license_log_event(
+            $license,
+            'site_deactivated',
+            sprintf(__('Site deactivated: %s', 'wc-product-license'), $site_url),
+            [
+                'source' => 'customer_ajax',
+                'actor_id' => get_current_user_id(),
+                'site_url' => $site_url,
+                'details' => [
+                    'sites_active' => count($active_sites),
+                    'sites_allowed' => (int) $license->sites_allowed,
+                ],
+            ]
         );
 
         wp_send_json_success([
@@ -3246,47 +4651,60 @@ class WC_Product_License_Manager
     public function track_activation($request)
     {
         $params = $request->get_params();
+        $site_url = isset($params['site_url']) ? esc_url_raw((string) $params['site_url']) : '';
+        $activation_status = isset($params['activation_status']) ? sanitize_text_field((string) $params['activation_status']) : 'yes';
 
-        // Required fields
-        $site_url = isset($params['site_url']) ? esc_url_raw($params['site_url']) : '';
-        $product_name = isset($params['product_name']) ? sanitize_text_field($params['product_name']) : '';
-        $activation_status = isset($params['activation_status']) ? sanitize_text_field($params['activation_status']) : 'yes';
-        $is_multisite = isset($params['multisite']) ? sanitize_text_field($params['multisite']) : 'no';
-        $wp_version = isset($params['wordpress_version']) ? sanitize_text_field($params['wordpress_version']) : '';
-        $php_version = isset($params['php_version']) ? sanitize_text_field($params['php_version']) : '';
-        $server_software = isset($params['server_software']) ? sanitize_text_field($params['server_software']) : '';
-        $mysql_version = isset($params['mysql_version']) ? sanitize_text_field($params['mysql_version']) : '';
-
-        // Validate required fields
         if (empty($site_url) || $activation_status !== 'yes') {
             return new WP_Error('missing_fields', __('Required fields are missing.', 'wc-product-license'), ['status' => 400]);
         }
 
-        // Store activation data
-        $tracking_data = [
+        $tracking_context = $this->get_tracking_license_context_from_params($params);
+        $tracking_payload = $this->build_tracking_payload($params, $request, 'tracking');
+        $timestamp = !empty($params['timestamp']) ? sanitize_text_field((string) $params['timestamp']) : current_time('mysql');
+        $record_id = wc_product_license_touch_activation_record($tracking_context['license'], $site_url, array_merge($tracking_payload, [
+            'context' => $tracking_context['context'],
+            'timestamp' => $timestamp,
+            'first_requested_at' => !empty($params['first_requested_at']) ? sanitize_text_field((string) $params['first_requested_at']) : $timestamp,
+            'increment_request_count' => array_key_exists('increment_request_count', $params) ? absint($params['increment_request_count']) : 0,
+        ]));
+
+        $tracking_data = array_merge($tracking_payload, [
             'site_url' => $site_url,
-            'product_name' => $product_name,
             'activation_status' => $activation_status,
-            'multisite' => $is_multisite,
-            'wordpress_version' => $wp_version,
-            'php_version' => $php_version,
-            'server_software' => $server_software,
-            'mysql_version' => $mysql_version,
-            'timestamp' => current_time('mysql')
-        ];
-
-        // Get existing tracking data
+            'license_key' => $tracking_context['context']['license_key'],
+            'product_id' => $tracking_context['context']['product_id'],
+            'timestamp' => $timestamp,
+        ]);
         $existing_data = get_option('wc_license_activation_tracking', []);
-
-        // Add or update site data
         $existing_data[$site_url] = $tracking_data;
-
-        // Save updated tracking data
         update_option('wc_license_activation_tracking', $existing_data);
+
+        if (!empty($tracking_context['context']['license_key'])) {
+            wc_product_license_log_event(
+                $tracking_context['license'] ? $tracking_context['license'] : $tracking_context['context'],
+                'telemetry_synced',
+                sprintf(__('Site telemetry synced: %s', 'wc-product-license'), $site_url),
+                [
+                    'source' => 'api',
+                    'site_url' => $site_url,
+                    'details' => [
+                        'wordpress_version' => $tracking_payload['wordpress_version'],
+                        'php_version' => $tracking_payload['php_version'],
+                        'environment_type' => $tracking_payload['environment_type'],
+                        'theme' => $tracking_payload['active_theme'],
+                    ],
+                ]
+            );
+        }
+
+        $site_record = $this->get_activation_record_by_id($record_id);
 
         return rest_ensure_response([
             'success' => true,
-            'message' => __('Activation data recorded successfully.', 'wc-product-license')
+            'message' => __('Activation data recorded successfully.', 'wc-product-license'),
+            'site_record_id' => $record_id,
+            'license_linked' => !empty($tracking_context['context']['license_id']),
+            'site_record' => $site_record ? $this->format_site_record_response($site_record) : null,
         ]);
     }
 
@@ -3296,46 +4714,67 @@ class WC_Product_License_Manager
     public function track_deactivation($request)
     {
         $params = $request->get_params();
+        $site_url = isset($params['site_url']) ? esc_url_raw((string) $params['site_url']) : '';
+        $activation_status = isset($params['activation_status']) ? sanitize_text_field((string) $params['activation_status']) : 'no';
+        $deactivation_reason = isset($params['deactivation_reason']) ? sanitize_text_field((string) $params['deactivation_reason']) : 'without reason';
 
-        // Required fields
-        $site_url = isset($params['site_url']) ? esc_url_raw($params['site_url']) : '';
-        $product_name = isset($params['product_name']) ? sanitize_text_field($params['product_name']) : '';
-        $activation_status = isset($params['activation_status']) ? sanitize_text_field($params['activation_status']) : 'no';
-        $deactivation_reason = isset($params['deactivation_reason']) ? sanitize_text_field($params['deactivation_reason']) : 'without reason';
-
-        // Validate required fields
         if (empty($site_url) || $activation_status !== 'no' || empty($deactivation_reason)) {
             return new WP_Error('missing_fields', __('Required fields are missing.', 'wc-product-license'), ['status' => 400]);
         }
 
-        // Store deactivation data
-        $deactivation_data = [
+        $tracking_context = $this->get_tracking_license_context_from_params($params);
+        $tracking_payload = $this->build_tracking_payload($params, $request, 'tracking');
+        $timestamp = !empty($params['timestamp']) ? sanitize_text_field((string) $params['timestamp']) : current_time('mysql');
+        $record_id = wc_product_license_mark_activation_inactive($tracking_context['license'], $site_url, array_merge($tracking_payload, [
+            'context' => $tracking_context['context'],
+            'timestamp' => $timestamp,
+            'first_requested_at' => !empty($params['first_requested_at']) ? sanitize_text_field((string) $params['first_requested_at']) : $timestamp,
+            'deactivation_reason' => $deactivation_reason,
+        ]));
+
+        $deactivation_data = array_merge($tracking_payload, [
             'site_url' => $site_url,
-            'product_name' => $product_name,
             'activation_status' => $activation_status,
             'deactivation_reason' => $deactivation_reason,
-            'timestamp' => current_time('mysql')
-        ];
-
-        // Get existing deactivation data
+            'license_key' => $tracking_context['context']['license_key'],
+            'product_id' => $tracking_context['context']['product_id'],
+            'timestamp' => $timestamp,
+        ]);
         $existing_data = get_option('wc_license_deactivation_tracking', []);
-
-        // Add deactivation record
         $existing_data[$site_url] = $deactivation_data;
-
-        // Save updated tracking data
         update_option('wc_license_deactivation_tracking', $existing_data);
 
-        // Also update the activation tracking to reflect deactivation
         $activation_data = get_option('wc_license_activation_tracking', []);
         if (isset($activation_data[$site_url])) {
             unset($activation_data[$site_url]);
             update_option('wc_license_activation_tracking', $activation_data);
         }
 
+        if (!empty($tracking_context['context']['license_key'])) {
+            wc_product_license_log_event(
+                $tracking_context['license'] ? $tracking_context['license'] : $tracking_context['context'],
+                'site_deactivated',
+                sprintf(__('Tracked site deactivated: %1$s (%2$s)', 'wc-product-license'), $site_url, $deactivation_reason),
+                [
+                    'source' => 'api',
+                    'site_url' => $site_url,
+                    'details' => [
+                        'reason' => $deactivation_reason,
+                        'environment_type' => $tracking_payload['environment_type'],
+                        'theme' => $tracking_payload['active_theme'],
+                    ],
+                ]
+            );
+        }
+
+        $site_record = $this->get_activation_record_by_id($record_id);
+
         return rest_ensure_response([
             'success' => true,
-            'message' => __('Deactivation data recorded successfully.', 'wc-product-license')
+            'message' => __('Deactivation data recorded successfully.', 'wc-product-license'),
+            'site_record_id' => $record_id,
+            'license_linked' => !empty($tracking_context['context']['license_id']),
+            'site_record' => $site_record ? $this->format_site_record_response($site_record) : null,
         ]);
     }
 
@@ -3477,6 +4916,7 @@ class WC_Product_License_Manager
     {
         $license_key = sanitize_text_field($request['key']);
         $site_url = isset($request['site_url']) ? esc_url_raw($request['site_url']) : '';
+        $tracking_payload = $this->build_tracking_payload($request->get_params(), $request, 'api');
 
         if (empty($site_url)) {
             return new WP_Error('missing_site_url', __('Site URL is required.', 'wc-product-license'), ['status' => 400]);
@@ -3489,6 +4929,13 @@ class WC_Product_License_Manager
 
         $active_sites = maybe_unserialize($license->active_sites) ?: [];
         if (isset($active_sites[$site_url])) {
+            $record_id = wc_product_license_touch_activation_record($license, $site_url, array_merge($tracking_payload, [
+                'timestamp' => isset($active_sites[$site_url]) ? (string) $active_sites[$site_url] : current_time('mysql'),
+                'first_requested_at' => isset($active_sites[$site_url]) ? (string) $active_sites[$site_url] : current_time('mysql'),
+                'increment_request_count' => 0,
+            ]));
+            $site_record = $this->get_activation_record_by_id($record_id);
+
             return rest_ensure_response([
                 'success' => true,
                 'message' => __('License successfully activated.', 'wc-product-license'),
@@ -3496,7 +4943,8 @@ class WC_Product_License_Manager
                 'sites_allowed' => (int) $license->sites_allowed,
                 'sites_allowed_label' => wc_product_license_get_activation_limit_text($license->sites_allowed),
                 'activation_usage_label' => wc_product_license_get_activation_usage_text(count($active_sites), $license->sites_allowed),
-                'active_sites' => $active_sites
+                'active_sites' => $active_sites,
+                'site_record' => $site_record ? $this->format_site_record_response($site_record) : null,
             ]);
         }
 
@@ -3518,7 +4966,7 @@ class WC_Product_License_Manager
 
         // Update license in database
         global $wpdb;
-        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $table_name = wc_product_license_get_table_name('licenses');
         $wpdb->update(
             $table_name,
             [
@@ -3527,6 +4975,32 @@ class WC_Product_License_Manager
             ],
             ['license_key' => $license_key]
         );
+        $record_id = wc_product_license_touch_activation_record($license, $site_url, [
+            'timestamp' => (string) $active_sites[$site_url],
+            'first_requested_at' => (string) $active_sites[$site_url],
+            'context' => [
+                'license_id' => (int) $license->id,
+                'license_key' => (string) $license->license_key,
+                'product_id' => (int) $license->product_id,
+                'order_id' => (int) $license->order_id,
+                'user_id' => (int) $license->user_id,
+            ],
+        ] + $tracking_payload);
+
+        wc_product_license_log_event(
+            $license,
+            'site_activated',
+            sprintf(__('Site activated via API: %s', 'wc-product-license'), $site_url),
+            [
+                'source' => 'api',
+                'site_url' => $site_url,
+                'details' => [
+                    'sites_active' => count($active_sites),
+                    'sites_allowed' => (int) $license->sites_allowed,
+                ],
+            ]
+        );
+        $site_record = $this->get_activation_record_by_id($record_id);
 
         return rest_ensure_response([
             'success' => true,
@@ -3535,7 +5009,8 @@ class WC_Product_License_Manager
             'sites_allowed' => (int) $license->sites_allowed,
             'sites_allowed_label' => wc_product_license_get_activation_limit_text($license->sites_allowed),
             'activation_usage_label' => wc_product_license_get_activation_usage_text(count($active_sites), $license->sites_allowed),
-            'active_sites' => $active_sites
+            'active_sites' => $active_sites,
+            'site_record' => $site_record ? $this->format_site_record_response($site_record) : null,
         ]);
     }
 
@@ -3546,6 +5021,7 @@ class WC_Product_License_Manager
     {
         $license_key = sanitize_text_field($request['key']);
         $site_url = isset($request['site_url']) ? esc_url_raw($request['site_url']) : '';
+        $tracking_payload = $this->build_tracking_payload($request->get_params(), $request, 'api');
 
         if (empty($site_url)) {
             return new WP_Error('missing_site_url', __('Site URL is required.', 'wc-product-license'), ['status' => 400]);
@@ -3566,7 +5042,7 @@ class WC_Product_License_Manager
 
         // Update license in database
         global $wpdb;
-        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $table_name = wc_product_license_get_table_name('licenses');
         $wpdb->update(
             $table_name,
             [
@@ -3575,6 +5051,32 @@ class WC_Product_License_Manager
             ],
             ['license_key' => $license_key]
         );
+        $record_id = wc_product_license_mark_activation_inactive($license, $site_url, [
+            'timestamp' => current_time('mysql'),
+            'context' => [
+                'license_id' => (int) $license->id,
+                'license_key' => (string) $license->license_key,
+                'product_id' => (int) $license->product_id,
+                'order_id' => (int) $license->order_id,
+                'user_id' => (int) $license->user_id,
+            ],
+            'deactivation_reason' => isset($request['deactivation_reason']) ? sanitize_text_field((string) $request['deactivation_reason']) : '',
+        ] + $tracking_payload);
+
+        wc_product_license_log_event(
+            $license,
+            'site_deactivated',
+            sprintf(__('Site deactivated via API: %s', 'wc-product-license'), $site_url),
+            [
+                'source' => 'api',
+                'site_url' => $site_url,
+                'details' => [
+                    'sites_active' => count($active_sites),
+                    'sites_allowed' => (int) $license->sites_allowed,
+                ],
+            ]
+        );
+        $site_record = $this->get_activation_record_by_id($record_id);
 
         return rest_ensure_response([
             'success' => true,
@@ -3583,7 +5085,8 @@ class WC_Product_License_Manager
             'sites_allowed' => (int) $license->sites_allowed,
             'sites_allowed_label' => wc_product_license_get_activation_limit_text($license->sites_allowed),
             'activation_usage_label' => wc_product_license_get_activation_usage_text(count($active_sites), $license->sites_allowed),
-            'active_sites' => $active_sites
+            'active_sites' => $active_sites,
+            'site_record' => $site_record ? $this->format_site_record_response($site_record) : null,
         ]);
     }
 

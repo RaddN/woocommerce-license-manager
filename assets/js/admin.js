@@ -885,6 +885,7 @@ jQuery(document).ready(function($) {
     $(document).ready(function() {
         // Initialize tabs
         initTabs();
+        initLicenseDetailTabs();
         // Initialize license management actions
         initLicenseActions();
         initManualLicenseFields();
@@ -904,6 +905,51 @@ jQuery(document).ready(function($) {
             var target = $(this).attr('href');
             $('.wc-license-settings-tabs .tab-content').removeClass('active');
             $(target).addClass('active');
+        });
+    }
+
+    function initLicenseDetailTabs() {
+        $('[data-wc-license-detail-tabs]').each(function() {
+            var $root = $(this);
+            var $buttons = $root.find('[data-license-detail-tab-target]');
+            var $panels = $root.find('[data-license-detail-tab-panel]');
+            var hashPrefix = String($root.data('licenseDetailHashPrefix') || 'license');
+
+            if (!$buttons.length || !$panels.length) {
+                return;
+            }
+
+            function activateDetailTab(targetKey, updateHash) {
+                var normalizedTarget = String(targetKey || $buttons.first().data('licenseDetailTabTarget') || 'overview');
+
+                $buttons.each(function() {
+                    var $button = $(this);
+                    var isActive = String($button.data('licenseDetailTabTarget')) === normalizedTarget;
+                    $button.toggleClass('is-active', isActive);
+                    $button.attr('aria-selected', isActive ? 'true' : 'false');
+                });
+
+                $panels.each(function() {
+                    var $panel = $(this);
+                    var isActive = String($panel.data('licenseDetailTabPanel')) === normalizedTarget;
+                    $panel.toggleClass('is-active', isActive);
+                    $panel.prop('hidden', !isActive);
+                });
+
+                if (updateHash !== false && window.history && typeof window.history.replaceState === 'function') {
+                    window.history.replaceState(null, '', window.location.href.split('#')[0] + '#' + hashPrefix + '-' + normalizedTarget);
+                }
+            }
+
+            $buttons.on('click', function(e) {
+                e.preventDefault();
+                activateDetailTab($(this).data('licenseDetailTabTarget'), true);
+            });
+
+            var hashPattern = new RegExp('^#' + hashPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-([a-z0-9_-]+)$', 'i');
+            var hashMatch = window.location.hash.match(hashPattern);
+            var initialTarget = hashMatch ? hashMatch[1] : $buttons.filter('.is-active').first().data('licenseDetailTabTarget');
+            activateDetailTab(initialTarget || 'overview', false);
         });
     }
 

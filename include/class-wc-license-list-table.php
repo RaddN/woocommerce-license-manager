@@ -14,6 +14,15 @@ if (!class_exists('WP_List_Table')) {
 
 class WC_License_List_Table extends WP_List_Table
 {
+    private function get_user_display_label($user_id)
+    {
+        $user = get_user_by('id', $user_id);
+        if ($user) {
+            return $user->display_name;
+        }
+
+        return $user_id ? __('Unknown', 'wc-product-license') : __('Guest checkout', 'wc-product-license');
+    }
 
     /**
      * Constructor
@@ -111,15 +120,16 @@ class WC_License_List_Table extends WP_List_Table
                 __('Delete', 'wc-product-license')
             ),
             'view' => sprintf(
-            '<a href="#" class="view-license" data-id="%d" data-key="%s" data-product="%s" data-user="%s" data-status="%s" data-expires="%s" data-sites-allowed="%d" data-sites-active="%d" data-sites ="%d">%s</a>',
+            '<a href="#" class="view-license" data-id="%d" data-key="%s" data-product="%s" data-user="%s" data-status="%s" data-expires="%s" data-sites-allowed="%s" data-sites-active="%d" data-activation-usage="%s" data-sites="%s">%s</a>',
             $item['id'],
             esc_attr($item['license_key']),
             esc_attr(get_the_title($item['product_id'])),
-            esc_attr(get_user_by('id', $item['user_id'])->display_name),
+            esc_attr($this->get_user_display_label($item['user_id'])),
             esc_attr($item['status']),
             esc_attr($item['expires_at']),
-            esc_attr($item['sites_allowed']),
+            esc_attr(wc_product_license_get_activation_limit_text($item['sites_allowed'])),
             esc_attr($item['sites_active']),
+            esc_attr(wc_product_license_get_activation_usage_text($item['sites_active'], $item['sites_allowed'])),
             esc_attr($item['active_sites']),
             __('View', 'wc-product-license')
         ),
@@ -151,7 +161,7 @@ class WC_License_List_Table extends WP_List_Table
             '<a href="%s">%s</a>',
             admin_url('user-edit.php?user_id=' . $user->ID),
             esc_html($user->display_name . ' (' . $user->user_email . ')')
-        ) : __('Unknown', 'wc-product-license');
+        ) : esc_html($this->get_user_display_label($item['user_id']));
     }
 
     /**
@@ -182,11 +192,7 @@ class WC_License_List_Table extends WP_List_Table
      */
     public function column_sites($item)
     {
-        return sprintf(
-            '%d / %d',
-            $item['sites_active'],
-            $item['sites_allowed']
-        );
+        return wc_product_license_get_activation_usage_text($item['sites_active'], $item['sites_allowed']);
     }
 
     /**

@@ -1,4 +1,24 @@
 jQuery(document).ready(function($) {
+    document.addEventListener('click', function(event) {
+        const licenseTrigger = event.target.closest('.wc-license-loop-cta[data-license-product-url]');
+        if (!licenseTrigger) {
+            return;
+        }
+
+        const packageUrl = licenseTrigger.getAttribute('data-license-product-url');
+        if (!packageUrl) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') {
+            event.stopImmediatePropagation();
+        }
+
+        window.location.assign(packageUrl);
+    }, true);
+
     $(".license-activation-form").on("submit", function(e) {
         e.preventDefault();
         var form = $(this);
@@ -121,10 +141,9 @@ jQuery(document).ready(function($) {
                         
                         // Update activations count
                         const activeSites = Object.keys(response.data.active_sites).length;
-                        const $licenseItem = $('.license-key-item:has([data-license-key="' + licenseKey + '"])');
-                        const $activations = $licenseItem.find('.license-details p:contains("Activations:")');
-                        const sitesAllowed = $activations.text().split('/')[1];
-                        $activations.html('<strong>Activations:</strong> ' + activeSites + '/' + sitesAllowed);
+                        const $licenseItem = $('.license-key-item[data-license-key="' + licenseKey + '"]');
+                        const $activations = $licenseItem.find('.license-activations');
+                        $activations.html('<strong>Activations:</strong> ' + response.data.activation_usage_label);
                         
                         // Show success message
                         showMessage(response.data.message, 'success');
@@ -153,7 +172,7 @@ jQuery(document).ready(function($) {
         e.preventDefault();
         
         const licenseKey = $(this).data('license-key');
-        const $licenseItem = $('.license-key-item:has([data-license-key="' + licenseKey + '"])');
+        const $licenseItem = $('.license-key-item[data-license-key="' + licenseKey + '"]');
         const $dropdownMenu = $(this).closest('.dropdown-menu');
         
         // Close dropdown
@@ -180,9 +199,8 @@ jQuery(document).ready(function($) {
                         });
                         
                         // Update activations count
-                        const $activations = $licenseItem.find('.license-details p:contains("Activations:")');
-                        const sitesAllowed = $activations.text().split('/')[1];
-                        $activations.html('<strong>Activations:</strong> 0/' + sitesAllowed);
+                        const $activations = $licenseItem.find('.license-activations');
+                        $activations.html('<strong>Activations:</strong> ' + response.data.activation_usage_label);
                         
                         // Remove deactivate all option from dropdown
                         $licenseItem.find('.deactivate-all-sites').parent().remove();
@@ -207,7 +225,7 @@ jQuery(document).ready(function($) {
         e.preventDefault();
         
         const licenseKey = $(this).data('license-key');
-        const $licenseItem = $('.license-key-item:has([data-license-key="' + licenseKey + '"])');
+        const $licenseItem = $('.license-key-item[data-license-key="' + licenseKey + '"]');
         const $dropdownMenu = $(this).closest('.dropdown-menu');
         
         // Close dropdown

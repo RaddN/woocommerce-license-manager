@@ -90,13 +90,10 @@ class WC_Product_License_Admin
      */
     public function enqueue_admin_assets($hook)
     {
-        $admin_hooks = [
-            'toplevel_page_wc-license-keys',
-            'license-keys_page_wc-license-add-new',
-            'license-keys_page_wc-license-settings'
-        ];
+        if (strpos($hook, 'wc-license') === false) {
+            return;
+        }
 
-        // if (in_array($hook, $admin_hooks)) {
         wp_enqueue_style(
             'wc-license-admin-styles',
             plugin_dir_url(dirname(__FILE__)) . 'assets/css/admin.css',
@@ -107,7 +104,7 @@ class WC_Product_License_Admin
         wp_enqueue_script(
             'wc-license-admin-scripts',
             plugin_dir_url(dirname(__FILE__)) . 'assets/js/admin.js',
-            ['jquery'],
+            ['jquery', 'jquery-ui-sortable'],
             '1.0.0',
             true
         );
@@ -129,13 +126,13 @@ class WC_Product_License_Admin
                 'user' => __('User', 'wc-product-license'),
                 'status' => __('Status', 'wc-product-license'),
                 'expiresAt' => __('Expires At', 'wc-product-license'),
+                'activations' => __('Activations', 'wc-product-license'),
                 'sitesAllowed' => __('Sites Allowed', 'wc-product-license'),
                 'sitesActive' => __('Sites Active', 'wc-product-license'),
                 'activate' => __('Activate', 'wc-product-license'),
                 'deactivate' => __('Deactivate', 'wc-product-license')
             ]
         ]);
-        // }
     }
 
     /**
@@ -242,6 +239,12 @@ class WC_Product_License_Admin
                         <th scope="row"><label for="license_sites"><?php _e('Sites Allowed', 'wc-product-license'); ?></label></th>
                         <td>
                             <input type="number" id="license_sites" name="license_sites" value="1" min="1" class="small-text" required />
+                            <p>
+                                <label>
+                                    <input type="checkbox" class="wc-license-manual-unlimited-toggle" name="license_unlimited_sites" value="1" data-target="#license_sites" />
+                                    <?php _e('Unlimited site activations', 'wc-product-license'); ?>
+                                </label>
+                            </p>
                         </td>
                     </tr>
                     <tr>
@@ -279,7 +282,8 @@ class WC_Product_License_Admin
         $product_id = absint($_POST['license_product']);
         $user_id = absint($_POST['license_user']);
         $license_key = !empty($_POST['license_key']) ? sanitize_text_field($_POST['license_key']) : $this->generate_unique_license_key();
-        $sites_allowed = absint($_POST['license_sites']);
+        $is_unlimited_sites = isset($_POST['license_unlimited_sites']);
+        $sites_allowed = wc_product_license_normalize_sites_allowed(isset($_POST['license_sites']) ? wp_unslash($_POST['license_sites']) : 1, $is_unlimited_sites);
         $validity = absint($_POST['license_validity']);
         $status = sanitize_text_field($_POST['license_status']);
 
@@ -430,7 +434,13 @@ class WC_Product_License_Admin
                     <tr>
                         <th scope="row"><label for="license_sites"><?php _e('Sites Allowed', 'wc-product-license'); ?></label></th>
                         <td>
-                            <input type="number" id="license_sites" name="license_sites" value="<?php echo esc_attr($license->sites_allowed); ?>" min="1" class="small-text" required />
+                            <input type="number" id="license_sites" name="license_sites" value="<?php echo esc_attr(wc_product_license_is_unlimited_sites($license->sites_allowed) ? 1 : $license->sites_allowed); ?>" min="1" class="small-text" required />
+                            <p>
+                                <label>
+                                    <input type="checkbox" class="wc-license-manual-unlimited-toggle" name="license_unlimited_sites" value="1" data-target="#license_sites" <?php checked(wc_product_license_is_unlimited_sites($license->sites_allowed)); ?> />
+                                    <?php _e('Unlimited site activations', 'wc-product-license'); ?>
+                                </label>
+                            </p>
                         </td>
                     </tr>
                     <tr>
@@ -492,7 +502,8 @@ class WC_Product_License_Admin
         $product_id = absint($_POST['license_product']);
         $user_id = absint($_POST['license_user']);
         $status = sanitize_text_field($_POST['license_status']);
-        $sites_allowed = absint($_POST['license_sites']);
+        $is_unlimited_sites = isset($_POST['license_unlimited_sites']);
+        $sites_allowed = wc_product_license_normalize_sites_allowed(isset($_POST['license_sites']) ? wp_unslash($_POST['license_sites']) : 1, $is_unlimited_sites);
         $expires_at = !empty($_POST['license_expires']) ? sanitize_text_field($_POST['license_expires']) . ' 23:59:59' : null;
 
         // Update license in database

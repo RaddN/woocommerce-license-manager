@@ -1,27 +1,24 @@
 jQuery(document).ready(function($) {
-    // Set initial price based on the selected option
     function updatePrice() {
         var selectedVariation = $("input[name=\'license_variation\']:checked");
-        var variationIndex = selectedVariation.val();
-        var price = licenseVariations.prices[variationIndex];
-        
-        if (price) {
-            // Format price with currency symbol
-            var formattedPrice = "";
-            
-            if (licenseVariations.priceFormat.indexOf("%1$s") < licenseVariations.priceFormat.indexOf("%2$s")) {
-                formattedPrice = licenseVariations.priceFormat.replace("%1$s", licenseVariations.currencySymbol).replace("%2$s", price);
-            } else {
-                formattedPrice = licenseVariations.priceFormat.replace("%2$s", price).replace("%1$s", licenseVariations.currencySymbol);
-            }
-            
-            $(".dynamic-price").html(formattedPrice);
+        if (!selectedVariation.length) {
+            selectedVariation = $("input[name=\'license_variation\']").first().prop("checked", true);
         }
+
+        var variationIndex = selectedVariation.val();
+        if (licenseVariations.formattedPrices && licenseVariations.formattedPrices[variationIndex]) {
+            $(".dynamic-price").html(licenseVariations.formattedPrices[variationIndex]);
+        }
+
+        $(".wc-license-option-card").removeClass("is-selected");
+        selectedVariation.closest(".wc-license-option-card").addClass("is-selected");
     }
-    
-    // Update price when option changes
+
     $("input[name=\'license_variation\']").on("change", updatePrice);
-    
-    // Set initial price
+
+    if (licenseVariations.defaultVariation && $("input[name=\'license_variation\'][value='" + licenseVariations.defaultVariation + "']").length) {
+        $("input[name=\'license_variation\'][value='" + licenseVariations.defaultVariation + "']").prop("checked", true);
+    }
+
     updatePrice();
 });

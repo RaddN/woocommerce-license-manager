@@ -235,6 +235,8 @@ class WC_Product_License_Manager
         // Product editing
         add_filter('woocommerce_product_data_tabs', [$this, 'add_license_product_data_tab']);
         add_action('woocommerce_product_data_panels', [$this, 'render_license_product_data_panel']);
+        add_action('add_meta_boxes_product', [$this, 'add_license_settings_meta_box']);
+        add_action('add_meta_boxes_product', [$this, 'add_download_stats_meta_box']);
         add_action('woocommerce_process_product_meta', [$this, 'save_license_product_option']);
         add_action('woocommerce_process_product_meta', [$this, 'save_license_variations'], 999);
         add_action('woocommerce_admin_process_product_object', [$this, 'sync_product_object_price_with_license_default'], 999);
@@ -405,6 +407,7 @@ class WC_Product_License_Manager
             $this->render_license_variation_row($variation, $index, $post->ID);
         }
         echo '</div>';
+        echo '</div>';
 
         echo '<script type="text/html" id="tmpl-wc-license-package">';
         $this->render_license_variation_row($this->get_empty_license_variation($product, '__INDEX__'), '__INDEX__', $post->ID);
@@ -412,6 +415,82 @@ class WC_Product_License_Manager
 
         echo '</div>';
         echo '</div>';
+    }
+
+    public function add_license_settings_meta_box()
+    {
+        add_meta_box(
+            'wc_license_settings',
+            __('License Settings', 'wc-product-license'),
+            [$this, 'render_license_settings_meta_box'],
+            'product',
+            'normal',
+            'default'
+        );
+    }
+
+    public function render_license_settings_meta_box($post)
+    {
+        if (!$post instanceof WP_Post) {
+            return;
+        }
+
+        $product = wc_get_product($post->ID);
+        $is_license_product = get_post_meta($post->ID, '_is_license_product', true) === 'yes';
+        $license_variations = $this->get_license_variations($post->ID);
+        $license_settings = $this->get_license_product_settings($post->ID);
+        $upgrade_paths = $this->get_license_upgrade_paths($post->ID);
+        $preset_key_summary = $this->get_preset_key_inventory_summary($post->ID);
+        $download_options = $this->get_download_options_from_product($product);
+        $stable_version_label = $license_settings['version'] !== ''
+            ? sprintf(__('Stable %s', 'wc-product-license'), $license_settings['version'])
+            : __('Stable version not set', 'wc-product-license');
+        $upgrade_count = count($upgrade_paths);
+        $preset_available_count = (int) $preset_key_summary['available'];
+
+        echo '<div id="wc_license_settings_metabox" class="wc-license-settings-metabox' . ($is_license_product ? '' : ' is-disabled') . '" data-license-settings-builder>';
+        echo '<div class="wc-license-settings-metabox__intro">';
+        echo '<div class="wc-license-settings-metabox__copy">';
+        echo '<span class="wc-license-settings-metabox__eyebrow">' . esc_html__('Advanced delivery controls', 'wc-product-license') . '</span>';
+        echo '<h3>' . esc_html__('Manage versions, upgrades, and fulfillment rules', 'wc-product-license') . '</h3>';
+        echo '<p>' . esc_html__('Configure stable and beta releases, compatibility requirements, readme data, upgrade routes, and preset key inventory here. Pricing packages remain in the Licensing tab.', 'wc-product-license') . '</p>';
+        echo '</div>';
+        echo '<div class="wc-license-settings-metabox__meta">';
+        echo '<span class="wc-license-pill">' . $this->get_admin_icon('release', 'wc-license-pill__icon') . '<span>' . esc_html($stable_version_label) . '</span></span>';
+        echo '<span class="wc-license-pill">' . $this->get_admin_icon('upgrade', 'wc-license-pill__icon') . '<span>' . sprintf(esc_html(_n('%d upgrade path', '%d upgrade paths', $upgrade_count, 'wc-product-license')), $upgrade_count) . '</span></span>';
+        echo '<span class="wc-license-pill">' . $this->get_admin_icon('key', 'wc-license-pill__icon') . '<span>' . sprintf(esc_html(_n('%d preset key ready', '%d preset keys ready', $preset_available_count, 'wc-product-license')), $preset_available_count) . '</span></span>';
+        echo '</div>';
+        echo '</div>';
+
+        if (!$is_license_product) {
+            echo '<div class="wc-license-panel-notice wc-license-panel-notice--info">';
+            echo $this->get_admin_icon('info', 'wc-license-panel-notice__icon');
+            echo '<div class="wc-license-panel-notice__content">';
+            echo '<strong>' . esc_html__('Licensing is currently off for this product.', 'wc-product-license') . '</strong> ';
+            echo esc_html__('Enable licensing in the Licensing tab when you want these release and upgrade settings to apply during checkout and API responses.', 'wc-product-license');
+            echo '</div>';
+            echo '</div>';
+        }
+
+        $settings_sections = $this->get_license_editor_sections();
+        unset($settings_sections['packages']);
+
+        echo '<div class="wc-license-editor-workspace wc-license-editor-workspace--metabox">';
+        $this->render_license_editor_navigation($settings_sections, 'versions');
+        echo '<div class="wc-license-editor-sections wc-license-settings-metabox__sections">';
+        $this->render_license_versions_section($license_settings, $download_options);
+        $this->render_license_beta_section($license_settings, $download_options);
+        $this->render_license_requirements_section($license_settings);
+        $this->render_license_readme_section($license_settings);
+        $this->render_license_upgrades_section($post->ID, $license_variations, $upgrade_paths);
+        $this->render_license_preset_keys_section($license_settings, $preset_key_summary);
+        echo '</div>';
+        echo '</div>';
+
+        echo '<script type="text/html" id="tmpl-wc-license-upgrade-path">';
+        $this->render_license_upgrade_path_row($post->ID, '__INDEX__', $this->get_empty_license_upgrade_path('__INDEX__'));
+        echo '</script>';
+
         echo '</div>';
     }
 
@@ -425,6 +504,13 @@ class WC_Product_License_Manager
             'info' => '<svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><path d="M10 8v4.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="5.75" r=".9" fill="currentColor"/></svg>',
             'alert' => '<svg viewBox="0 0 20 20" fill="none"><path d="M10 3.5 17 15.75H3L10 3.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 7.25v3.75" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="13.4" r=".9" fill="currentColor"/></svg>',
             'trash' => '<svg viewBox="0 0 20 20" fill="none"><path d="M4.75 5.75h10.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.5 5.75V4.5A1.25 1.25 0 0 1 8.75 3.25h2.5A1.25 1.25 0 0 1 12.5 4.5v1.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="m6 5.75.65 8.05A2 2 0 0 0 8.64 15.7h2.72a2 2 0 0 0 1.99-1.9L14 5.75" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+            'release' => '<svg viewBox="0 0 20 20" fill="none"><path d="M10 3.25 4.25 6.5v7L10 16.75l5.75-3.25v-7L10 3.25Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7.5 10 9 11.5l3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+            'beta' => '<svg viewBox="0 0 20 20" fill="none"><path d="M7 3.5v13M7 3.5h4.25a3 3 0 0 1 0 6H7m0 0h4.75a3 3 0 0 1 0 6H7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+            'requirements' => '<svg viewBox="0 0 20 20" fill="none"><path d="M6.25 4.25h7.5A1.75 1.75 0 0 1 15.5 6v8A1.75 1.75 0 0 1 13.75 15.75h-7.5A1.75 1.75 0 0 1 4.5 14V6a1.75 1.75 0 0 1 1.75-1.75Z" stroke="currentColor" stroke-width="1.6"/><path d="M7.5 7.5h5M7.5 10h5M7.5 12.5h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+            'readme' => '<svg viewBox="0 0 20 20" fill="none"><path d="M5.25 4.25h7.5A2.25 2.25 0 0 1 15 6.5v8.25H7.5a2.25 2.25 0 0 0-2.25 2.25V6.5a2.25 2.25 0 0 1 2.25-2.25Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7.75 7.5h4.5M7.75 10h4.5M7.75 12.5h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+            'upgrade' => '<svg viewBox="0 0 20 20" fill="none"><path d="M10 15.75V4.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="m6.5 7.75 3.5-3.5 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.25 15.75h11.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+            'key' => '<svg viewBox="0 0 20 20" fill="none"><path d="M11.25 11.25a3.75 3.75 0 1 0-2.5-6.55l-5 5V13h3.3v-1.95H9v-1.8h1.95l.3-.3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="11.25" cy="7.5" r=".9" fill="currentColor"/></svg>',
+            'chart' => '<svg viewBox="0 0 20 20" fill="none"><path d="M4.25 15.75V10.5M10 15.75V6.25M15.75 15.75V8.75" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M3.25 15.75h13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
         ];
 
         if (!isset($icons[$icon])) {
@@ -434,6 +520,684 @@ class WC_Product_License_Manager
         $classes = trim('wc-license-icon ' . $class);
 
         return '<span class="' . esc_attr($classes) . '" aria-hidden="true">' . $icons[$icon] . '</span>';
+    }
+
+    private function get_default_license_product_settings()
+    {
+        return [
+            'version' => '',
+            'release_download_id' => '',
+            'upgrade_notice' => '',
+            'changelog' => '',
+            'rollout_enabled' => false,
+            'rollout_percentage' => 100,
+            'rollout_version_gate_enabled' => false,
+            'rollout_min_version' => '',
+            'beta_enabled' => false,
+            'beta_version' => '',
+            'beta_download_id' => '',
+            'beta_changelog' => '',
+            'requirements' => [
+                'php' => '',
+                'wp' => '',
+                'wc' => '',
+            ],
+            'readme_source' => 'inline',
+            'readme_url' => '',
+            'readme_meta' => [
+                'tested_up_to' => '',
+                'stable_tag' => '',
+                'contributors' => '',
+                'donate_link' => '',
+                'license' => '',
+                'homepage' => '',
+                'added' => '',
+                'banner_high' => '',
+                'banner_low' => '',
+            ],
+            'readme_sections' => [
+                'description' => '',
+                'installation' => '',
+                'faq' => '',
+                'changelog' => '',
+                'remaining_content' => '',
+            ],
+            'preset_keys' => [],
+            'preset_key_fallback' => true,
+        ];
+    }
+
+    private function normalize_preset_key_pool($preset_keys)
+    {
+        if (is_string($preset_keys)) {
+            $preset_keys = preg_split('/\r\n|\r|\n/', $preset_keys);
+        }
+
+        if (!is_array($preset_keys)) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($preset_keys as $preset_key) {
+            $preset_key = strtoupper(sanitize_text_field(wp_unslash((string) $preset_key)));
+            if ($preset_key === '') {
+                continue;
+            }
+
+            $normalized[] = $preset_key;
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
+    private function normalize_license_product_settings($settings)
+    {
+        $defaults = $this->get_default_license_product_settings();
+        if (!is_array($settings)) {
+            $settings = [];
+        }
+
+        $settings = wp_parse_args($settings, $defaults);
+        $settings['requirements'] = wp_parse_args(is_array($settings['requirements']) ? $settings['requirements'] : [], $defaults['requirements']);
+        $settings['readme_meta'] = wp_parse_args(is_array($settings['readme_meta']) ? $settings['readme_meta'] : [], $defaults['readme_meta']);
+        $settings['readme_sections'] = wp_parse_args(is_array($settings['readme_sections']) ? $settings['readme_sections'] : [], $defaults['readme_sections']);
+
+        $normalized = $defaults;
+        $normalized['version'] = sanitize_text_field((string) $settings['version']);
+        $normalized['release_download_id'] = sanitize_text_field((string) $settings['release_download_id']);
+        $normalized['upgrade_notice'] = sanitize_textarea_field((string) $settings['upgrade_notice']);
+        $normalized['changelog'] = sanitize_textarea_field((string) $settings['changelog']);
+        $normalized['rollout_enabled'] = !empty($settings['rollout_enabled']);
+        $normalized['rollout_percentage'] = max(1, min(100, absint($settings['rollout_percentage'])));
+        $normalized['rollout_version_gate_enabled'] = !empty($settings['rollout_version_gate_enabled']);
+        $normalized['rollout_min_version'] = sanitize_text_field((string) $settings['rollout_min_version']);
+        $normalized['beta_enabled'] = !empty($settings['beta_enabled']);
+        $normalized['beta_version'] = sanitize_text_field((string) $settings['beta_version']);
+        $normalized['beta_download_id'] = sanitize_text_field((string) $settings['beta_download_id']);
+        $normalized['beta_changelog'] = sanitize_textarea_field((string) $settings['beta_changelog']);
+        $normalized['requirements']['php'] = sanitize_text_field((string) $settings['requirements']['php']);
+        $normalized['requirements']['wp'] = sanitize_text_field((string) $settings['requirements']['wp']);
+        $normalized['requirements']['wc'] = sanitize_text_field((string) $settings['requirements']['wc']);
+        $normalized['readme_source'] = $settings['readme_source'] === 'url' ? 'url' : 'inline';
+        $normalized['readme_url'] = esc_url_raw((string) $settings['readme_url']);
+        $normalized['readme_meta']['tested_up_to'] = sanitize_text_field((string) $settings['readme_meta']['tested_up_to']);
+        $normalized['readme_meta']['stable_tag'] = sanitize_text_field((string) $settings['readme_meta']['stable_tag']);
+        $normalized['readme_meta']['contributors'] = sanitize_text_field((string) $settings['readme_meta']['contributors']);
+        $normalized['readme_meta']['donate_link'] = esc_url_raw((string) $settings['readme_meta']['donate_link']);
+        $normalized['readme_meta']['license'] = sanitize_text_field((string) $settings['readme_meta']['license']);
+        $normalized['readme_meta']['homepage'] = esc_url_raw((string) $settings['readme_meta']['homepage']);
+        $normalized['readme_meta']['added'] = sanitize_text_field((string) $settings['readme_meta']['added']);
+        $normalized['readme_meta']['banner_high'] = esc_url_raw((string) $settings['readme_meta']['banner_high']);
+        $normalized['readme_meta']['banner_low'] = esc_url_raw((string) $settings['readme_meta']['banner_low']);
+        $normalized['readme_sections']['description'] = sanitize_textarea_field((string) $settings['readme_sections']['description']);
+        $normalized['readme_sections']['installation'] = sanitize_textarea_field((string) $settings['readme_sections']['installation']);
+        $normalized['readme_sections']['faq'] = sanitize_textarea_field((string) $settings['readme_sections']['faq']);
+        $normalized['readme_sections']['changelog'] = sanitize_textarea_field((string) $settings['readme_sections']['changelog']);
+        $normalized['readme_sections']['remaining_content'] = sanitize_textarea_field((string) $settings['readme_sections']['remaining_content']);
+        $normalized['preset_keys'] = $this->normalize_preset_key_pool($settings['preset_keys']);
+        $normalized['preset_key_fallback'] = !empty($settings['preset_key_fallback']);
+
+        return $normalized;
+    }
+
+    private function get_license_product_settings($product_id)
+    {
+        return $this->normalize_license_product_settings(get_post_meta($product_id, '_wc_license_product_settings', true));
+    }
+
+    private function update_license_product_settings($product_id, $settings)
+    {
+        $normalized_settings = $this->normalize_license_product_settings($settings);
+        update_post_meta($product_id, '_wc_license_product_settings', $normalized_settings);
+
+        return $normalized_settings;
+    }
+
+    private function get_license_editor_sections()
+    {
+        return [
+            'packages' => [
+                'label' => __('Packages', 'wc-product-license'),
+                'icon' => 'package',
+            ],
+            'versions' => [
+                'label' => __('Versions', 'wc-product-license'),
+                'icon' => 'release',
+            ],
+            'betas' => [
+                'label' => __('Betas', 'wc-product-license'),
+                'icon' => 'beta',
+            ],
+            'requirements' => [
+                'label' => __('Requirements', 'wc-product-license'),
+                'icon' => 'requirements',
+            ],
+            'readme' => [
+                'label' => __('Readme', 'wc-product-license'),
+                'icon' => 'readme',
+            ],
+            'upgrades' => [
+                'label' => __('Upgrades', 'wc-product-license'),
+                'icon' => 'upgrade',
+            ],
+            'preset-keys' => [
+                'label' => __('Preset Keys', 'wc-product-license'),
+                'icon' => 'key',
+            ],
+        ];
+    }
+
+    private function render_license_editor_navigation($sections = null, $active_section = 'packages')
+    {
+        echo '<nav class="wc-license-editor-nav" aria-label="' . esc_attr__('Licensing sections', 'wc-product-license') . '">';
+
+        if (!is_array($sections)) {
+            $sections = $this->get_license_editor_sections();
+        }
+
+        foreach ($sections as $section_key => $section) {
+            $active_class = $section_key === $active_section ? ' is-active' : '';
+            echo '<button type="button" class="wc-license-editor-nav__item' . esc_attr($active_class) . '" data-license-section-target="' . esc_attr($section_key) . '">';
+            echo $this->get_admin_icon($section['icon'], 'wc-license-editor-nav__icon');
+            echo '<span class="wc-license-editor-nav__copy">';
+            echo '<strong>' . esc_html($section['label']) . '</strong>';
+            echo '</span>';
+            echo '</button>';
+        }
+
+        echo '</nav>';
+    }
+
+    private function get_admin_license_product_map($current_product_id = 0, $current_variations = null)
+    {
+        $product_ids = get_posts([
+            'post_type' => 'product',
+            'post_status' => ['publish', 'draft', 'pending', 'private'],
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+            'meta_key' => '_is_license_product',
+            'meta_value' => 'yes',
+            'orderby' => 'title',
+            'order' => 'ASC',
+        ]);
+
+        if ($current_product_id > 0 && !in_array($current_product_id, $product_ids, true)) {
+            $product_ids[] = $current_product_id;
+        }
+
+        $product_map = [];
+
+        foreach ($product_ids as $product_id) {
+            $product_id = absint($product_id);
+            if ($product_id <= 0) {
+                continue;
+            }
+
+            $title = get_the_title($product_id);
+            if ($title === '') {
+                $title = sprintf(__('Product #%d', 'wc-product-license'), $product_id);
+            }
+
+            $variations = ($current_product_id > 0 && (int) $product_id === (int) $current_product_id && is_array($current_variations))
+                ? $current_variations
+                : $this->get_license_variations($product_id);
+
+            $packages = [];
+            foreach ($variations as $index => $variation) {
+                $variation = $this->normalize_license_variation($variation, $index);
+                $packages[] = [
+                    'value' => (string) $index,
+                    'label' => $variation['title'] !== '' ? $variation['title'] : sprintf(__('Package %s', 'wc-product-license'), $index),
+                ];
+            }
+
+            $product_map[(string) $product_id] = [
+                'id' => $product_id,
+                'label' => $title,
+                'packages' => $packages,
+            ];
+        }
+
+        return $product_map;
+    }
+
+    private function render_release_download_select($field_name, $selected_download_id, $download_options, $placeholder = '')
+    {
+        echo '<select name="' . esc_attr($field_name) . '">';
+        echo '<option value="">' . esc_html($placeholder !== '' ? $placeholder : __('Choose a downloadable file', 'wc-product-license')) . '</option>';
+
+        foreach ($download_options as $download_id => $download) {
+            echo '<option value="' . esc_attr($download_id) . '" ' . selected((string) $selected_download_id, (string) $download_id, false) . '>' . esc_html($download['name']) . '</option>';
+        }
+
+        echo '</select>';
+    }
+
+    private function render_license_versions_section($settings, $download_options)
+    {
+        echo '<section class="wc-license-editor-section is-active" data-license-editor-section="versions">';
+        echo '<div class="wc-license-settings-card">';
+        echo '<div class="wc-license-settings-card__header">';
+        echo '<div class="wc-license-settings-card__copy">';
+        echo '<span class="wc-license-settings-card__eyebrow">' . esc_html__('Stable channel', 'wc-product-license') . '</span>';
+        echo '<h4>' . esc_html__('Version management', 'wc-product-license') . '</h4>';
+        echo '<p>' . esc_html__('Attach the primary update file, version number, release notes, and rollout rules that licensed clients can consume over the API.', 'wc-product-license') . '</p>';
+        echo '</div>';
+        echo $this->get_admin_icon('release', 'wc-license-settings-card__icon');
+        echo '</div>';
+
+        echo '<div class="wc-license-settings-grid wc-license-settings-grid--two">';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Current version', 'wc-product-license') . '</label><input type="text" name="license_settings[version]" value="' . esc_attr($settings['version']) . '" placeholder="' . esc_attr__('1.4.0', 'wc-product-license') . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Stable download file', 'wc-product-license') . '</label>';
+        $this->render_release_download_select('license_settings[release_download_id]', $settings['release_download_id'], $download_options, __('Use the first WooCommerce download', 'wc-product-license'));
+        echo '</div>';
+        echo '<div class="wc-license-field wc-license-field--full"><label>' . esc_html__('Upgrade notice', 'wc-product-license') . '</label><textarea name="license_settings[upgrade_notice]" rows="3" placeholder="' . esc_attr__('Highlight migration notes or urgent fixes shown before updating.', 'wc-product-license') . '">' . esc_textarea($settings['upgrade_notice']) . '</textarea></div>';
+        echo '<div class="wc-license-field wc-license-field--full"><label>' . esc_html__('Changelog', 'wc-product-license') . '</label><textarea name="license_settings[changelog]" rows="6" placeholder="' . esc_attr__("= 1.4.0 =\n* Added staged upgrades and faster sync logic.", 'wc-product-license') . '">' . esc_textarea($settings['changelog']) . '</textarea></div>';
+        echo '</div>';
+
+        echo '<div class="wc-license-settings-subcard">';
+        echo '<div class="wc-license-settings-subcard__header"><div><h5>' . esc_html__('Release rollout', 'wc-product-license') . '</h5><p>' . esc_html__('Throttle exposure for new stable releases when you do not want every license to see the update at once.', 'wc-product-license') . '</p></div></div>';
+        echo '<div class="wc-license-settings-grid wc-license-settings-grid--three">';
+        echo '<label class="wc-license-toggle-field"><input type="checkbox" name="license_settings[rollout_enabled]" value="1" ' . checked($settings['rollout_enabled'], true, false) . ' /><span><strong>' . esc_html__('Enable gradual rollout', 'wc-product-license') . '</strong><small>' . esc_html__('Use a percentage-based gate derived from the license key.', 'wc-product-license') . '</small></span></label>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Exposure percentage', 'wc-product-license') . '</label><input type="number" min="1" max="100" step="1" name="license_settings[rollout_percentage]" value="' . esc_attr($settings['rollout_percentage']) . '" /></div>';
+        echo '<label class="wc-license-toggle-field"><input type="checkbox" name="license_settings[rollout_version_gate_enabled]" value="1" ' . checked($settings['rollout_version_gate_enabled'], true, false) . ' /><span><strong>' . esc_html__('Limit by installed version', 'wc-product-license') . '</strong><small>' . esc_html__('Only show the release when the client reports a version at or below the threshold.', 'wc-product-license') . '</small></span></label>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Installed version threshold', 'wc-product-license') . '</label><input type="text" name="license_settings[rollout_min_version]" value="' . esc_attr($settings['rollout_min_version']) . '" placeholder="' . esc_attr__('1.3.0', 'wc-product-license') . '" /></div>';
+        echo '</div>';
+        echo '</div>';
+
+        echo '</div>';
+        echo '</section>';
+    }
+
+    private function render_license_beta_section($settings, $download_options)
+    {
+        echo '<section class="wc-license-editor-section" data-license-editor-section="betas">';
+        echo '<div class="wc-license-settings-card">';
+        echo '<div class="wc-license-settings-card__header">';
+        echo '<div class="wc-license-settings-card__copy">';
+        echo '<span class="wc-license-settings-card__eyebrow">' . esc_html__('Optional preview channel', 'wc-product-license') . '</span>';
+        echo '<h4>' . esc_html__('Beta releases', 'wc-product-license') . '</h4>';
+        echo '<p>' . esc_html__('Ship an opt-in beta build without replacing the stable download. Beta details are returned separately so your client can decide which channel to install.', 'wc-product-license') . '</p>';
+        echo '</div>';
+        echo $this->get_admin_icon('beta', 'wc-license-settings-card__icon');
+        echo '</div>';
+
+        echo '<div class="wc-license-settings-grid wc-license-settings-grid--two">';
+        echo '<label class="wc-license-toggle-field wc-license-field--full"><input type="checkbox" name="license_settings[beta_enabled]" value="1" ' . checked($settings['beta_enabled'], true, false) . ' /><span><strong>' . esc_html__('Enable beta channel', 'wc-product-license') . '</strong><small>' . esc_html__('Beta metadata is exposed alongside the stable release for valid licenses.', 'wc-product-license') . '</small></span></label>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Beta version', 'wc-product-license') . '</label><input type="text" name="license_settings[beta_version]" value="' . esc_attr($settings['beta_version']) . '" placeholder="' . esc_attr__('1.5.0-beta.1', 'wc-product-license') . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Beta download file', 'wc-product-license') . '</label>';
+        $this->render_release_download_select('license_settings[beta_download_id]', $settings['beta_download_id'], $download_options, __('Choose the beta package', 'wc-product-license'));
+        echo '</div>';
+        echo '<div class="wc-license-field wc-license-field--full"><label>' . esc_html__('Beta changelog', 'wc-product-license') . '</label><textarea name="license_settings[beta_changelog]" rows="6" placeholder="' . esc_attr__("= 1.5.0-beta.1 =\n* Experimental updater checks.\n* Not recommended for production stores.", 'wc-product-license') . '">' . esc_textarea($settings['beta_changelog']) . '</textarea></div>';
+        echo '</div>';
+
+        echo '</div>';
+        echo '</section>';
+    }
+
+    private function render_license_requirements_section($settings)
+    {
+        echo '<section class="wc-license-editor-section" data-license-editor-section="requirements">';
+        echo '<div class="wc-license-settings-card">';
+        echo '<div class="wc-license-settings-card__header">';
+        echo '<div class="wc-license-settings-card__copy">';
+        echo '<span class="wc-license-settings-card__eyebrow">' . esc_html__('Compatibility guardrails', 'wc-product-license') . '</span>';
+        echo '<h4>' . esc_html__('Requirements', 'wc-product-license') . '</h4>';
+        echo '<p>' . esc_html__('These minimum versions are returned to licensed clients so they can warn before installation or update.', 'wc-product-license') . '</p>';
+        echo '</div>';
+        echo $this->get_admin_icon('requirements', 'wc-license-settings-card__icon');
+        echo '</div>';
+
+        echo '<div class="wc-license-settings-grid wc-license-settings-grid--three">';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Minimum PHP', 'wc-product-license') . '</label><input type="text" name="license_settings[requirements][php]" value="' . esc_attr($settings['requirements']['php']) . '" placeholder="' . esc_attr__('8.0', 'wc-product-license') . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Minimum WordPress', 'wc-product-license') . '</label><input type="text" name="license_settings[requirements][wp]" value="' . esc_attr($settings['requirements']['wp']) . '" placeholder="' . esc_attr__('6.5', 'wc-product-license') . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Minimum WooCommerce', 'wc-product-license') . '</label><input type="text" name="license_settings[requirements][wc]" value="' . esc_attr($settings['requirements']['wc']) . '" placeholder="' . esc_attr__('9.0', 'wc-product-license') . '" /></div>';
+        echo '</div>';
+
+        echo '</div>';
+        echo '</section>';
+    }
+
+    private function render_license_readme_section($settings)
+    {
+        echo '<section class="wc-license-editor-section" data-license-editor-section="readme">';
+        echo '<div class="wc-license-settings-card">';
+        echo '<div class="wc-license-settings-card__header">';
+        echo '<div class="wc-license-settings-card__copy">';
+        echo '<span class="wc-license-settings-card__eyebrow">' . esc_html__('Release content', 'wc-product-license') . '</span>';
+        echo '<h4>' . esc_html__('Readme information', 'wc-product-license') . '</h4>';
+        echo '<p>' . esc_html__('Capture product metadata and section content that can be returned to update clients or internal tooling without relying on an external marketplace.', 'wc-product-license') . '</p>';
+        echo '</div>';
+        echo $this->get_admin_icon('readme', 'wc-license-settings-card__icon');
+        echo '</div>';
+
+        echo '<div class="wc-license-settings-grid wc-license-settings-grid--two">';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Readme source', 'wc-product-license') . '</label><select name="license_settings[readme_source]"><option value="inline" ' . selected($settings['readme_source'], 'inline', false) . '>' . esc_html__('Managed here', 'wc-product-license') . '</option><option value="url" ' . selected($settings['readme_source'], 'url', false) . '>' . esc_html__('External URL', 'wc-product-license') . '</option></select></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Readme URL', 'wc-product-license') . '</label><input type="url" name="license_settings[readme_url]" value="' . esc_attr($settings['readme_url']) . '" placeholder="' . esc_attr__('https://example.com/readme.txt', 'wc-product-license') . '" /></div>';
+        echo '</div>';
+
+        echo '<div class="wc-license-settings-subcard">';
+        echo '<div class="wc-license-settings-subcard__header"><div><h5>' . esc_html__('Readme metadata', 'wc-product-license') . '</h5><p>' . esc_html__('Store the metadata fields buyers and update clients often need alongside the release package.', 'wc-product-license') . '</p></div></div>';
+        echo '<div class="wc-license-settings-grid wc-license-settings-grid--three">';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Tested up to', 'wc-product-license') . '</label><input type="text" name="license_settings[readme_meta][tested_up_to]" value="' . esc_attr($settings['readme_meta']['tested_up_to']) . '" placeholder="' . esc_attr__('6.8', 'wc-product-license') . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Stable tag', 'wc-product-license') . '</label><input type="text" name="license_settings[readme_meta][stable_tag]" value="' . esc_attr($settings['readme_meta']['stable_tag']) . '" placeholder="' . esc_attr__('1.4.0', 'wc-product-license') . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Contributors', 'wc-product-license') . '</label><input type="text" name="license_settings[readme_meta][contributors]" value="' . esc_attr($settings['readme_meta']['contributors']) . '" placeholder="' . esc_attr__('plugincy, support-team', 'wc-product-license') . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Donate link', 'wc-product-license') . '</label><input type="url" name="license_settings[readme_meta][donate_link]" value="' . esc_attr($settings['readme_meta']['donate_link']) . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('License label', 'wc-product-license') . '</label><input type="text" name="license_settings[readme_meta][license]" value="' . esc_attr($settings['readme_meta']['license']) . '" placeholder="' . esc_attr__('GPL-2.0-or-later', 'wc-product-license') . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Homepage', 'wc-product-license') . '</label><input type="url" name="license_settings[readme_meta][homepage]" value="' . esc_attr($settings['readme_meta']['homepage']) . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Initial release date', 'wc-product-license') . '</label><input type="text" name="license_settings[readme_meta][added]" value="' . esc_attr($settings['readme_meta']['added']) . '" placeholder="' . esc_attr__('2025-11-01', 'wc-product-license') . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Banner high URL', 'wc-product-license') . '</label><input type="url" name="license_settings[readme_meta][banner_high]" value="' . esc_attr($settings['readme_meta']['banner_high']) . '" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Banner low URL', 'wc-product-license') . '</label><input type="url" name="license_settings[readme_meta][banner_low]" value="' . esc_attr($settings['readme_meta']['banner_low']) . '" /></div>';
+        echo '</div>';
+        echo '</div>';
+
+        echo '<div class="wc-license-settings-grid wc-license-settings-grid--two">';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Description', 'wc-product-license') . '</label><textarea name="license_settings[readme_sections][description]" rows="7">' . esc_textarea($settings['readme_sections']['description']) . '</textarea></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Installation', 'wc-product-license') . '</label><textarea name="license_settings[readme_sections][installation]" rows="7">' . esc_textarea($settings['readme_sections']['installation']) . '</textarea></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('FAQ', 'wc-product-license') . '</label><textarea name="license_settings[readme_sections][faq]" rows="7">' . esc_textarea($settings['readme_sections']['faq']) . '</textarea></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Readme changelog', 'wc-product-license') . '</label><textarea name="license_settings[readme_sections][changelog]" rows="7">' . esc_textarea($settings['readme_sections']['changelog']) . '</textarea></div>';
+        echo '<div class="wc-license-field wc-license-field--full"><label>' . esc_html__('Additional content', 'wc-product-license') . '</label><textarea name="license_settings[readme_sections][remaining_content]" rows="5">' . esc_textarea($settings['readme_sections']['remaining_content']) . '</textarea></div>';
+        echo '</div>';
+
+        echo '</div>';
+        echo '</section>';
+    }
+
+    private function get_empty_license_upgrade_path($index = 0)
+    {
+        return [
+            'index' => $index,
+            'source_variation_index' => 'any',
+            'target_product_id' => 0,
+            'target_variation_index' => 'default',
+            'prorate' => true,
+            'discount' => '',
+            'note' => '',
+            'position' => is_numeric($index) ? (int) $index : 0,
+        ];
+    }
+
+    private function normalize_license_upgrade_path($path, $index)
+    {
+        $path = wp_parse_args(is_array($path) ? $path : [], $this->get_empty_license_upgrade_path($index));
+
+        return [
+            'index' => $index,
+            'source_variation_index' => isset($path['source_variation_index']) && $path['source_variation_index'] !== '' ? sanitize_text_field((string) $path['source_variation_index']) : 'any',
+            'target_product_id' => absint($path['target_product_id']),
+            'target_variation_index' => isset($path['target_variation_index']) && $path['target_variation_index'] !== '' ? sanitize_text_field((string) $path['target_variation_index']) : 'default',
+            'prorate' => !empty($path['prorate']),
+            'discount' => $path['discount'] !== '' ? wc_format_decimal($path['discount']) : '',
+            'note' => sanitize_textarea_field((string) $path['note']),
+            'position' => absint($path['position']),
+        ];
+    }
+
+    private function get_license_upgrade_paths($product_id)
+    {
+        $raw_paths = get_post_meta($product_id, '_wc_license_upgrade_paths', true);
+        if (!is_array($raw_paths)) {
+            return [];
+        }
+
+        $paths = [];
+        foreach ($raw_paths as $index => $path) {
+            if (!is_array($path)) {
+                continue;
+            }
+
+            $normalized_path = $this->normalize_license_upgrade_path($path, $index);
+            if ($normalized_path['target_product_id'] <= 0) {
+                continue;
+            }
+
+            $paths[$index] = $normalized_path;
+        }
+
+        uasort($paths, static function ($left, $right) {
+            return (int) $left['position'] <=> (int) $right['position'];
+        });
+
+        return $paths;
+    }
+
+    private function render_upgrade_variation_options($product_map, $target_product_id, $selected_variation_index)
+    {
+        $product_key = (string) absint($target_product_id);
+        $packages = isset($product_map[$product_key]['packages']) ? $product_map[$product_key]['packages'] : [];
+
+        echo '<option value="default"' . selected((string) $selected_variation_index, 'default', false) . '>' . esc_html__('Default package', 'wc-product-license') . '</option>';
+
+        foreach ($packages as $package) {
+            echo '<option value="' . esc_attr($package['value']) . '" ' . selected((string) $selected_variation_index, (string) $package['value'], false) . '>' . esc_html($package['label']) . '</option>';
+        }
+    }
+
+    private function render_license_upgrade_path_row($product_id, $index, $path)
+    {
+        $path = $this->normalize_license_upgrade_path($path, $index);
+        $source_variations = $this->get_license_variations($product_id);
+        $product_map = $this->get_admin_license_product_map($product_id, $source_variations);
+
+        echo '<div class="wc-license-upgrade-path" data-license-upgrade-path data-upgrade-path-index="' . esc_attr($index) . '">';
+        echo '<input type="hidden" class="wc-license-upgrade-position" name="license_upgrade_position[' . esc_attr($index) . ']" value="' . esc_attr($path['position']) . '" />';
+        echo '<div class="wc-license-upgrade-path__header">';
+        echo '<div class="wc-license-upgrade-path__title">' . $this->get_admin_icon('upgrade', 'wc-license-upgrade-path__icon') . '<strong>' . esc_html__('Upgrade route', 'wc-product-license') . '</strong></div>';
+        echo '<button type="button" class="button-link-delete wc-license-remove-upgrade-path">' . esc_html__('Remove', 'wc-product-license') . '</button>';
+        echo '</div>';
+        echo '<div class="wc-license-settings-grid wc-license-settings-grid--three">';
+
+        echo '<div class="wc-license-field"><label>' . esc_html__('Eligible current package', 'wc-product-license') . '</label><select class="wc-license-upgrade-source-package" name="license_upgrade_source_variation[' . esc_attr($index) . ']">';
+        echo '<option value="any"' . selected($path['source_variation_index'], 'any', false) . '>' . esc_html__('Any package', 'wc-product-license') . '</option>';
+        foreach ($source_variations as $variation_index => $variation) {
+            $variation = $this->normalize_license_variation($variation, $variation_index);
+            echo '<option value="' . esc_attr($variation_index) . '" ' . selected((string) $path['source_variation_index'], (string) $variation_index, false) . '>' . esc_html($variation['title'] !== '' ? $variation['title'] : sprintf(__('Package %s', 'wc-product-license'), $variation_index)) . '</option>';
+        }
+        echo '</select></div>';
+
+        echo '<div class="wc-license-field"><label>' . esc_html__('Target product', 'wc-product-license') . '</label><select class="wc-license-upgrade-product" name="license_upgrade_target_product[' . esc_attr($index) . ']">';
+        echo '<option value="">' . esc_html__('Choose a licensed product', 'wc-product-license') . '</option>';
+        foreach ($product_map as $available_product_id => $product_data) {
+            echo '<option value="' . esc_attr($available_product_id) . '" ' . selected((string) $path['target_product_id'], (string) $available_product_id, false) . '>' . esc_html($product_data['label']) . '</option>';
+        }
+        echo '</select></div>';
+
+        echo '<div class="wc-license-field"><label>' . esc_html__('Target package', 'wc-product-license') . '</label><select class="wc-license-upgrade-package" name="license_upgrade_target_variation[' . esc_attr($index) . ']">';
+        $this->render_upgrade_variation_options($product_map, $path['target_product_id'], $path['target_variation_index']);
+        echo '</select></div>';
+
+        echo '<label class="wc-license-toggle-field"><input type="checkbox" name="license_upgrade_prorate[' . esc_attr($index) . ']" value="1" ' . checked($path['prorate'], true, false) . ' /><span><strong>' . esc_html__('Prorate prior spend', 'wc-product-license') . '</strong><small>' . esc_html__('Subtract what the customer already paid before discounting the target package.', 'wc-product-license') . '</small></span></label>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Extra discount (%)', 'wc-product-license') . '</label><input type="number" min="0" max="100" step="0.01" name="license_upgrade_discount[' . esc_attr($index) . ']" value="' . esc_attr($path['discount']) . '" placeholder="0" /></div>';
+        echo '<div class="wc-license-field"><label>' . esc_html__('Route note', 'wc-product-license') . '</label><input type="text" name="license_upgrade_note[' . esc_attr($index) . ']" value="' . esc_attr($path['note']) . '" placeholder="' . esc_attr__('Shown in the upgrade selector to explain who this path is for.', 'wc-product-license') . '" /></div>';
+
+        echo '</div>';
+        echo '</div>';
+    }
+
+    private function render_license_upgrades_section($product_id, $license_variations, $upgrade_paths)
+    {
+        echo '<section class="wc-license-editor-section" data-license-editor-section="upgrades">';
+        echo '<div class="wc-license-settings-card">';
+        echo '<div class="wc-license-settings-card__header">';
+        echo '<div class="wc-license-settings-card__copy">';
+        echo '<span class="wc-license-settings-card__eyebrow">' . esc_html__('Upgrade and cross-sell flow', 'wc-product-license') . '</span>';
+        echo '<h4>' . esc_html__('Upgrade paths', 'wc-product-license') . '</h4>';
+        echo '<p>' . esc_html__('Create curated upgrade routes. Buyers will only see the paths that match the current package they own, and checkout pricing will honor proration and discounts.', 'wc-product-license') . '</p>';
+        echo '</div>';
+        echo '<div class="wc-license-settings-card__actions">';
+        echo '<button type="button" class="button button-secondary wc-license-add-upgrade-path">' . $this->get_admin_icon('plus', 'wc-license-button__icon') . '<span>' . esc_html__('Add upgrade path', 'wc-product-license') . '</span></button>';
+        echo '</div>';
+        echo '</div>';
+
+        echo '<div class="wc-license-upgrade-paths" data-license-upgrade-path-list>';
+        if (empty($upgrade_paths)) {
+            $upgrade_paths = [0 => $this->get_empty_license_upgrade_path(0)];
+        }
+
+        foreach ($upgrade_paths as $index => $path) {
+            $this->render_license_upgrade_path_row($product_id, $index, $path);
+        }
+        echo '</div>';
+        echo '</div>';
+        echo '</section>';
+    }
+
+    private function normalize_preset_key_assignments($assignments)
+    {
+        if (!is_array($assignments)) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($assignments as $license_key => $assignment) {
+            $license_key = strtoupper(sanitize_text_field((string) $license_key));
+            if ($license_key === '') {
+                continue;
+            }
+
+            $assignment = is_array($assignment) ? $assignment : [];
+            $normalized[$license_key] = [
+                'assigned_at' => isset($assignment['assigned_at']) ? sanitize_text_field((string) $assignment['assigned_at']) : '',
+                'order_id' => isset($assignment['order_id']) ? absint($assignment['order_id']) : 0,
+                'order_item_id' => isset($assignment['order_item_id']) ? absint($assignment['order_item_id']) : 0,
+            ];
+        }
+
+        return $normalized;
+    }
+
+    private function get_preset_key_inventory_summary($product_id)
+    {
+        $available_keys = $this->get_available_preset_keys($product_id, true);
+        $assigned = $this->normalize_preset_key_assignments(get_post_meta($product_id, '_wc_license_assigned_preset_keys', true));
+
+        return [
+            'available' => count($available_keys),
+            'assigned' => count($assigned),
+            'total' => count($available_keys) + count($assigned),
+        ];
+    }
+
+    private function render_license_preset_keys_section($settings, $preset_key_summary)
+    {
+        echo '<section class="wc-license-editor-section" data-license-editor-section="preset-keys">';
+        echo '<div class="wc-license-settings-card">';
+        echo '<div class="wc-license-settings-card__header">';
+        echo '<div class="wc-license-settings-card__copy">';
+        echo '<span class="wc-license-settings-card__eyebrow">' . esc_html__('Pre-generated inventory', 'wc-product-license') . '</span>';
+        echo '<h4>' . esc_html__('Preset keys', 'wc-product-license') . '</h4>';
+        echo '<p>' . esc_html__('Load your own key inventory for this product. New sales will consume these keys first, and you can decide whether checkout falls back to generated keys when the pool is empty.', 'wc-product-license') . '</p>';
+        echo '</div>';
+        echo $this->get_admin_icon('key', 'wc-license-settings-card__icon');
+        echo '</div>';
+
+        echo '<div class="wc-license-settings-stats">';
+        echo '<div class="wc-license-settings-stat"><strong>' . esc_html(number_format_i18n($preset_key_summary['available'])) . '</strong><span>' . esc_html__('Available', 'wc-product-license') . '</span></div>';
+        echo '<div class="wc-license-settings-stat"><strong>' . esc_html(number_format_i18n($preset_key_summary['assigned'])) . '</strong><span>' . esc_html__('Assigned', 'wc-product-license') . '</span></div>';
+        echo '<div class="wc-license-settings-stat"><strong>' . esc_html(number_format_i18n($preset_key_summary['total'])) . '</strong><span>' . esc_html__('Total tracked', 'wc-product-license') . '</span></div>';
+        echo '</div>';
+
+        echo '<div class="wc-license-settings-grid wc-license-settings-grid--two">';
+        echo '<label class="wc-license-toggle-field wc-license-field--full"><input type="checkbox" name="license_settings[preset_key_fallback]" value="1" ' . checked($settings['preset_key_fallback'], true, false) . ' /><span><strong>' . esc_html__('Fallback to generated keys when the pool is empty', 'wc-product-license') . '</strong><small>' . esc_html__('Disable this to require preset keys for every new sale.', 'wc-product-license') . '</small></span></label>';
+        echo '<div class="wc-license-field wc-license-field--full"><label>' . esc_html__('Available preset keys', 'wc-product-license') . '</label><textarea name="license_settings[preset_keys]" rows="12" placeholder="' . esc_attr__("One key per line.\nABC-123-XYZ\nDEF-456-UVW", 'wc-product-license') . '">' . esc_textarea(implode("\n", $settings['preset_keys'])) . '</textarea></div>';
+        echo '</div>';
+
+        echo '</div>';
+        echo '</section>';
+    }
+
+    public function add_download_stats_meta_box()
+    {
+        add_meta_box(
+            'wc_license_download_stats',
+            __('Download Stats', 'wc-product-license'),
+            [$this, 'render_download_stats_meta_box'],
+            'product',
+            'side',
+            'default'
+        );
+    }
+
+    private function get_product_download_stats($product_id)
+    {
+        global $wpdb;
+
+        $stats = [
+            'net_sales' => 0,
+            'net_revenue' => 0,
+            'download_count' => 0,
+        ];
+
+        $order_product_lookup = $wpdb->prefix . 'wc_order_product_lookup';
+        $order_stats_table = $wpdb->prefix . 'wc_order_stats';
+        $permissions_table = $wpdb->prefix . 'woocommerce_downloadable_product_permissions';
+
+        $lookup_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $order_product_lookup));
+        $stats_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $order_stats_table));
+        $permissions_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $permissions_table));
+
+        if ($lookup_exists === $order_product_lookup && $stats_exists === $order_stats_table) {
+            $product_sales = $wpdb->get_row($wpdb->prepare(
+                "SELECT COALESCE(SUM(opl.product_qty), 0) AS net_sales, COALESCE(SUM(opl.product_net_revenue), 0) AS net_revenue
+                FROM {$order_product_lookup} opl
+                INNER JOIN {$order_stats_table} os ON os.order_id = opl.order_id
+                WHERE opl.product_id = %d
+                AND os.status IN ('wc-processing', 'wc-completed')",
+                $product_id
+            ));
+
+            if ($product_sales) {
+                $stats['net_sales'] = (int) $product_sales->net_sales;
+                $stats['net_revenue'] = (float) $product_sales->net_revenue;
+            }
+        }
+
+        if ($permissions_exists === $permissions_table) {
+            $stats['download_count'] = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COALESCE(SUM(download_count), 0) FROM {$permissions_table} WHERE product_id = %d",
+                $product_id
+            ));
+        }
+
+        if (($lookup_exists !== $order_product_lookup || $stats_exists !== $order_stats_table) || ((int) $stats['net_sales'] === 0 && (float) $stats['net_revenue'] === 0.0)) {
+            $orders = wc_get_orders([
+                'limit' => -1,
+                'status' => ['processing', 'completed'],
+                'return' => 'objects',
+            ]);
+
+            foreach ($orders as $order) {
+                foreach ($order->get_items() as $item) {
+                    if ((int) $item->get_product_id() !== (int) $product_id) {
+                        continue;
+                    }
+
+                    $stats['net_sales'] += (int) $item->get_quantity();
+                    $stats['net_revenue'] += (float) $item->get_total();
+                }
+            }
+        }
+
+        return $stats;
+    }
+
+    public function render_download_stats_meta_box($post)
+    {
+        $product_id = is_object($post) && isset($post->ID) ? absint($post->ID) : 0;
+        if ($product_id <= 0) {
+            return;
+        }
+
+        $stats = $this->get_product_download_stats($product_id);
+
+        echo '<div class="wc-license-download-stats">';
+        echo '<div class="wc-license-download-stats__item"><span class="wc-license-download-stats__label">' . esc_html__('Net sales', 'wc-product-license') . '</span><strong>' . esc_html(number_format_i18n($stats['net_sales'])) . '</strong></div>';
+        echo '<div class="wc-license-download-stats__item"><span class="wc-license-download-stats__label">' . esc_html__('Net revenue', 'wc-product-license') . '</span><strong>' . wp_kses_post(wc_price($stats['net_revenue'])) . '</strong></div>';
+        echo '<div class="wc-license-download-stats__item"><span class="wc-license-download-stats__label">' . esc_html__('Delivered downloads', 'wc-product-license') . '</span><strong>' . esc_html(number_format_i18n($stats['download_count'])) . '</strong></div>';
+        echo '<p class="wc-license-download-stats__note">' . esc_html__('Sales are pulled from WooCommerce order lookup tables and download delivery counts are pulled from the native permissions log.', 'wc-product-license') . '</p>';
+        echo '</div>';
     }
 
     private function get_empty_license_variation($product = null, $index = 0)
@@ -1052,6 +1816,53 @@ class WC_Product_License_Manager
         echo '</div>';
     }
 
+    private function save_license_settings_from_request($product_id)
+    {
+        if (!isset($_POST['license_settings']) || !is_array($_POST['license_settings'])) {
+            return $this->get_license_product_settings($product_id);
+        }
+
+        $settings = $this->update_license_product_settings($product_id, wp_unslash($_POST['license_settings']));
+        $assigned = $this->normalize_preset_key_assignments(get_post_meta($product_id, '_wc_license_assigned_preset_keys', true));
+
+        if (!empty($assigned) && !empty($settings['preset_keys'])) {
+            $settings['preset_keys'] = array_values(array_diff($settings['preset_keys'], array_keys($assigned)));
+            $settings = $this->update_license_product_settings($product_id, $settings);
+        }
+
+        return $settings;
+    }
+
+    private function save_license_upgrade_paths_from_request($product_id)
+    {
+        $paths = [];
+        $target_products = isset($_POST['license_upgrade_target_product']) && is_array($_POST['license_upgrade_target_product'])
+            ? wp_unslash($_POST['license_upgrade_target_product'])
+            : [];
+
+        foreach ($target_products as $index => $target_product_id) {
+            $path = [
+                'source_variation_index' => isset($_POST['license_upgrade_source_variation'][$index]) ? wp_unslash($_POST['license_upgrade_source_variation'][$index]) : 'any',
+                'target_product_id' => $target_product_id,
+                'target_variation_index' => isset($_POST['license_upgrade_target_variation'][$index]) ? wp_unslash($_POST['license_upgrade_target_variation'][$index]) : 'default',
+                'prorate' => isset($_POST['license_upgrade_prorate'][$index]),
+                'discount' => isset($_POST['license_upgrade_discount'][$index]) ? wp_unslash($_POST['license_upgrade_discount'][$index]) : '',
+                'note' => isset($_POST['license_upgrade_note'][$index]) ? wp_unslash($_POST['license_upgrade_note'][$index]) : '',
+                'position' => isset($_POST['license_upgrade_position'][$index]) ? absint($_POST['license_upgrade_position'][$index]) : absint($index),
+            ];
+
+            $normalized_path = $this->normalize_license_upgrade_path($path, $index);
+            if ($normalized_path['target_product_id'] <= 0) {
+                continue;
+            }
+
+            $paths[$index] = $normalized_path;
+        }
+
+        update_post_meta($product_id, '_wc_license_upgrade_paths', $paths);
+        return $paths;
+    }
+
     /**
      * Save license variations
      */
@@ -1139,10 +1950,127 @@ class WC_Product_License_Manager
         }
 
         update_post_meta($product_id, '_license_variations', $variations);
+        $this->save_license_settings_from_request($product_id);
+        $this->save_license_upgrade_paths_from_request($product_id);
 
         if (get_post_meta($product_id, '_is_license_product', true) === 'yes' && !empty($variations)) {
             $this->sync_product_price_with_default_license_variation($product_id, $variations);
         }
+    }
+
+    private function get_existing_license_keys($license_keys)
+    {
+        global $wpdb;
+
+        $license_keys = $this->normalize_preset_key_pool($license_keys);
+        if (empty($license_keys)) {
+            return [];
+        }
+
+        $table_name = $wpdb->prefix . 'wc_product_licenses';
+        $placeholders = implode(', ', array_fill(0, count($license_keys), '%s'));
+        $query = "SELECT license_key FROM {$table_name} WHERE license_key IN ({$placeholders})";
+
+        return array_map('strval', (array) $wpdb->get_col($wpdb->prepare($query, $license_keys)));
+    }
+
+    private function get_available_preset_keys($product_id, $persist = false)
+    {
+        $settings = $this->get_license_product_settings($product_id);
+        $assigned = $this->normalize_preset_key_assignments(get_post_meta($product_id, '_wc_license_assigned_preset_keys', true));
+        $existing_keys = array_flip($this->get_existing_license_keys($settings['preset_keys']));
+        $available_keys = [];
+        $inventory_changed = false;
+
+        foreach ($settings['preset_keys'] as $preset_key) {
+            if (isset($assigned[$preset_key]) || isset($existing_keys[$preset_key])) {
+                if (!isset($assigned[$preset_key])) {
+                    $assigned[$preset_key] = [
+                        'assigned_at' => '',
+                        'order_id' => 0,
+                        'order_item_id' => 0,
+                    ];
+                }
+
+                $inventory_changed = true;
+                continue;
+            }
+
+            $available_keys[] = $preset_key;
+        }
+
+        if ($persist && ($inventory_changed || count($available_keys) !== count($settings['preset_keys']))) {
+            $settings['preset_keys'] = $available_keys;
+            $this->update_license_product_settings($product_id, $settings);
+            update_post_meta($product_id, '_wc_license_assigned_preset_keys', $assigned);
+        }
+
+        return $available_keys;
+    }
+
+    private function product_requires_preset_keys($product_id)
+    {
+        $settings = $this->get_license_product_settings($product_id);
+        return !$settings['preset_key_fallback'];
+    }
+
+    private function consume_preset_license_key($product_id, $order_id = 0, $order_item_id = 0)
+    {
+        $available_keys = $this->get_available_preset_keys($product_id, true);
+        if (empty($available_keys)) {
+            return '';
+        }
+
+        $selected_key = array_shift($available_keys);
+        $settings = $this->get_license_product_settings($product_id);
+        $assigned = $this->normalize_preset_key_assignments(get_post_meta($product_id, '_wc_license_assigned_preset_keys', true));
+
+        $settings['preset_keys'] = $available_keys;
+        $this->update_license_product_settings($product_id, $settings);
+
+        $assigned[$selected_key] = [
+            'assigned_at' => current_time('mysql'),
+            'order_id' => absint($order_id),
+            'order_item_id' => absint($order_item_id),
+        ];
+        update_post_meta($product_id, '_wc_license_assigned_preset_keys', $assigned);
+
+        return $selected_key;
+    }
+
+    private function get_license_order_item_context($license)
+    {
+        if (!$license || empty($license->order_id)) {
+            return null;
+        }
+
+        $order = wc_get_order($license->order_id);
+        if (!$order) {
+            return null;
+        }
+
+        foreach ($order->get_items() as $item_id => $item) {
+            if (wc_get_order_item_meta($item_id, '_license_key', true) !== $license->license_key) {
+                continue;
+            }
+
+            $variation = $item->get_meta('_selected_license_variation', true);
+            if (!empty($variation)) {
+                $variation = $this->normalize_license_variation($variation, $variation['index'] ?? 0);
+            } else {
+                $variation = $this->get_default_license_variation($license->product_id);
+            }
+
+            return [
+                'order' => $order,
+                'item' => $item,
+                'item_id' => $item_id,
+                'variation' => $variation,
+                'license_data' => $item->get_meta('_license_data', true),
+            ];
+        }
+
+        return null;
     }
 
     private function calculate_license_expiry_date($selected_variation)
@@ -1171,7 +2099,7 @@ class WC_Product_License_Manager
         return $expires_at ? gmdate('Y-m-d H:i:s', $expires_at) : null;
     }
 
-    private function build_license_data($license_key, $product_id, $order, $item, $selected_variation)
+    private function build_license_data($license_key, $product_id, $order, $item, $selected_variation, $key_source = 'generated')
     {
         $active_sites = [];
         $purchased_at = current_time('mysql');
@@ -1192,6 +2120,7 @@ class WC_Product_License_Manager
             'active_sites' => $active_sites,
             'package_name' => $selected_variation['title'],
             'package_data' => $selected_variation,
+            'key_source' => $key_source,
         ];
     }
 
@@ -1277,21 +2206,31 @@ class WC_Product_License_Manager
 
                 if ($upgraded) {
                     wc_add_order_item_meta($item_id, '_license_key', $upgrade_data['license_key']);
-                    wc_add_order_item_meta($item_id, '_license_data', $this->build_license_data($upgrade_data['license_key'], $product_id, $order, $item, $selected_variation));
+                    wc_add_order_item_meta($item_id, '_license_data', $this->build_license_data($upgrade_data['license_key'], $product_id, $order, $item, $selected_variation, 'existing'));
+                    wc_add_order_item_meta($item_id, '_license_key_source', 'existing');
                     wc_add_order_item_meta($item_id, '_license_upgrade_applied', 'yes');
                     continue;
                 }
             }
 
-            // Generate license key
-            $license_key = $this->generate_unique_license_key();
+            $license_key = $this->consume_preset_license_key($product_id, $order->get_id(), $item_id);
+            $key_source = $license_key !== '' ? 'preset' : 'generated';
+
+            if ($license_key === '') {
+                if ($this->product_requires_preset_keys($product_id)) {
+                    $order->add_order_note(__('Preset license key inventory was empty during fulfillment, so a generated key was issued to avoid leaving the order without access.', 'wc-product-license'));
+                }
+
+                $license_key = $this->generate_unique_license_key();
+            }
 
             // Store license details
-            $license_data = $this->build_license_data($license_key, $product_id, $order, $item, $selected_variation);
+            $license_data = $this->build_license_data($license_key, $product_id, $order, $item, $selected_variation, $key_source);
 
             // Save license to order item meta
             wc_add_order_item_meta($item_id, '_license_key', $license_key);
             wc_add_order_item_meta($item_id, '_license_data', $license_data);
+            wc_add_order_item_meta($item_id, '_license_key_source', $key_source);
 
             // Also store in a custom table for better querying
             $this->store_license_in_db($license_data);
@@ -1582,20 +2521,8 @@ class WC_Product_License_Manager
             return;
         }
 
-        // Enqueue frontend script and localize data
+        // Enqueue frontend script
         wp_enqueue_script('wc-license-manager-frontend');
-        wp_localize_script('wc-license-manager-frontend', 'wcLicenseManager', [
-            'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('wc-license-manager'),
-            'i18n' => [
-                'activating' => __('Activating...', 'wc-product-license'),
-                'deactivating' => __('Deactivating...', 'wc-product-license'),
-                'deactivatingAll' => __('Deactivating all sites...', 'wc-product-license'),
-                'deleting' => __('Deleting...', 'wc-product-license'),
-                'confirmDeactivateAll' => __('Are you sure you want to deactivate all sites?', 'wc-product-license'),
-                'confirmDelete' => __('Are you sure you want to delete this license?', 'wc-product-license')
-            ]
-        ]);
 
         // Enqueue custom CSS for styling
         wp_enqueue_style('wc-license-manager-styles', plugin_dir_url(__FILE__) . 'assets/css/license-manager.css');
@@ -1744,6 +2671,157 @@ class WC_Product_License_Manager
         ]);
     }
 
+    private function get_target_upgrade_variation($target_product_id, $target_variation_index)
+    {
+        $target_variation_index = (string) $target_variation_index;
+        $variations = $this->get_license_variations($target_product_id);
+        if (empty($variations)) {
+            return null;
+        }
+
+        if ($target_variation_index === '' || $target_variation_index === 'default') {
+            return $this->get_default_license_variation($target_product_id);
+        }
+
+        if (!isset($variations[$target_variation_index])) {
+            return null;
+        }
+
+        return $variations[$target_variation_index];
+    }
+
+    private function calculate_upgrade_pricing($license, $target_variation, $target_product, $upgrade_path = [])
+    {
+        $target_price = (float) $this->get_license_variation_price($target_variation, $target_product);
+        $current_price = $license ? (float) $license->purchased_price : 0.0;
+        $credit = !empty($upgrade_path['prorate']) ? min($current_price, $target_price) : 0.0;
+        $subtotal = max(0, $target_price - $credit);
+        $discount_percent = isset($upgrade_path['discount']) && $upgrade_path['discount'] !== '' ? max(0, min(100, (float) $upgrade_path['discount'])) : 0.0;
+        $discount_amount = $discount_percent > 0 ? round(($subtotal * $discount_percent) / 100, wc_get_price_decimals()) : 0.0;
+        $final_price = max(0, $subtotal - $discount_amount);
+
+        return [
+            'target_price' => $target_price,
+            'current_price' => $current_price,
+            'credit' => $credit,
+            'discount_percent' => $discount_percent,
+            'discount_amount' => $discount_amount,
+            'final_price' => $final_price,
+        ];
+    }
+
+    private function get_available_upgrade_options($license, $source_product_id)
+    {
+        $source_product_id = absint($source_product_id);
+        if (!$license || $source_product_id <= 0) {
+            return [];
+        }
+
+        $license_context = $this->get_license_order_item_context($license);
+        $current_variation = isset($license_context['variation']) && is_array($license_context['variation']) ? $license_context['variation'] : null;
+        $current_variation_index = $current_variation && isset($current_variation['index']) ? (string) $current_variation['index'] : '';
+        $options = [];
+        $configured_paths = $this->get_license_upgrade_paths($source_product_id);
+
+        foreach ($configured_paths as $path_index => $upgrade_path) {
+            if ($upgrade_path['source_variation_index'] !== 'any' && (string) $upgrade_path['source_variation_index'] !== $current_variation_index) {
+                continue;
+            }
+
+            $target_product = wc_get_product($upgrade_path['target_product_id']);
+            $target_variation = $this->get_target_upgrade_variation($upgrade_path['target_product_id'], $upgrade_path['target_variation_index']);
+            if (!$target_product || !$target_variation) {
+                continue;
+            }
+
+            if ((int) $upgrade_path['target_product_id'] === $source_product_id && $current_variation_index !== '' && (string) $target_variation['index'] === $current_variation_index) {
+                continue;
+            }
+
+            $pricing = $this->calculate_upgrade_pricing($license, $target_variation, $target_product, $upgrade_path);
+            $target_label = (int) $upgrade_path['target_product_id'] === $source_product_id
+                ? $target_variation['title']
+                : sprintf(__('%1$s - %2$s', 'wc-product-license'), $target_product->get_name(), $target_variation['title']);
+
+            $options[] = [
+                'token' => 'path:' . $path_index,
+                'source_product_id' => $source_product_id,
+                'target_product_id' => (int) $upgrade_path['target_product_id'],
+                'target_product_name' => $target_product->get_name(),
+                'target_variation' => $target_variation,
+                'path' => $upgrade_path,
+                'title' => $target_label,
+                'description' => $upgrade_path['note'] !== '' ? $upgrade_path['note'] : $target_variation['description'],
+                'pricing' => $pricing,
+            ];
+        }
+
+        if (!empty($options)) {
+            return $options;
+        }
+
+        $fallback_variations = $this->get_license_variations($source_product_id);
+        $source_product = wc_get_product($source_product_id);
+        foreach ($fallback_variations as $variation_index => $variation) {
+            $variation = $this->normalize_license_variation($variation, $variation_index);
+            if ($current_variation_index !== '' && (string) $variation['index'] === $current_variation_index) {
+                continue;
+            }
+
+            $options[] = [
+                'token' => 'legacy:' . $variation_index,
+                'source_product_id' => $source_product_id,
+                'target_product_id' => $source_product_id,
+                'target_product_name' => $source_product ? $source_product->get_name() : '',
+                'target_variation' => $variation,
+                'path' => [
+                    'source_variation_index' => 'any',
+                    'target_variation_index' => (string) $variation_index,
+                    'prorate' => false,
+                    'discount' => '',
+                    'note' => '',
+                ],
+                'title' => $variation['title'],
+                'description' => $variation['description'],
+                'pricing' => $this->calculate_upgrade_pricing($license, $variation, $source_product, []),
+            ];
+        }
+
+        return $options;
+    }
+
+    private function get_requested_upgrade_context($target_product_id)
+    {
+        if (!isset($_GET['license_upgrade'], $_GET['upgrade_source'], $_GET['upgrade_path'])) {
+            return null;
+        }
+
+        $license_key = sanitize_text_field(wp_unslash($_GET['license_upgrade']));
+        $source_product_id = absint(wp_unslash($_GET['upgrade_source']));
+        $path_token = sanitize_text_field(wp_unslash($_GET['upgrade_path']));
+        $license = $this->get_license_by_key($license_key);
+
+        if (!$license || !$source_product_id || ($license->user_id > 0 && (int) $license->user_id !== (int) get_current_user_id())) {
+            return null;
+        }
+
+        foreach ($this->get_available_upgrade_options($license, $source_product_id) as $upgrade_option) {
+            if ($upgrade_option['token'] !== $path_token) {
+                continue;
+            }
+
+            if ((int) $upgrade_option['target_product_id'] !== (int) $target_product_id) {
+                continue;
+            }
+
+            $upgrade_option['license_key'] = $license_key;
+            $upgrade_option['license'] = $license;
+            return $upgrade_option;
+        }
+
+        return null;
+    }
+
     /**
      * Add AJAX handler for upgrade/downgrade package
      * Add this method to your WC_Product_License_Manager class
@@ -1764,41 +2842,56 @@ class WC_Product_License_Manager
             wp_send_json_error(['message' => __('You do not own this license key.', 'wc-product-license')]);
         }
 
-        // Get license variations for this product
-        $license_variations = $this->get_license_variations($product_id);
-        if (empty($license_variations)) {
+        $upgrade_options = $this->get_available_upgrade_options($license, $product_id);
+        if (empty($upgrade_options)) {
             wp_send_json_error(['message' => __('No upgrade options available.', 'wc-product-license')]);
         }
 
-        // Get product info
         $product = wc_get_product($product_id);
         $product_name = $product ? $product->get_name() : __('Unknown Product', 'wc-product-license');
-
-        // Prepare upgrade URL to add to cart with package change
-        $upgrade_url = wc_get_page_permalink('cart') . '?add-to-cart=' . $product_id . '&license_upgrade=' . $license_key;
 
         // Build HTML for upgrade modal
         $html = '<div class="upgrade-options-modal">';
         $html .= '<h3>' . sprintf(__('Upgrade/Downgrade Options for %s', 'wc-product-license'), esc_html($product_name)) . '</h3>';
-        $html .= '<p>' . __('Select a package to upgrade or downgrade to:', 'wc-product-license') . '</p>';
+        $html .= '<p>' . __('Select a package or product to move this license to. Pricing will respect the configured upgrade rules.', 'wc-product-license') . '</p>';
         $html .= '<div class="upgrade-options-list">';
 
-        $default_variation = $this->get_default_license_variation($product_id);
-        $default_index = $default_variation ? $default_variation['index'] : array_key_first($license_variations);
+        $default_upgrade_token = '';
+        $first_upgrade_option = reset($upgrade_options);
+        if (is_array($first_upgrade_option) && isset($first_upgrade_option['token'])) {
+            $default_upgrade_token = (string) $first_upgrade_option['token'];
+        }
 
-        foreach ($license_variations as $index => $variation) {
+        foreach ($upgrade_options as $upgrade_option) {
+            $target_variation = $upgrade_option['target_variation'];
+            $target_product_id = (int) $upgrade_option['target_product_id'];
+            $upgrade_url = add_query_arg([
+                'add-to-cart' => $target_product_id,
+                'license_upgrade' => $license_key,
+                'upgrade_source' => $product_id,
+                'upgrade_path' => $upgrade_option['token'],
+                'license_variation' => $target_variation['index'],
+            ], wc_get_page_permalink('cart'));
+            $pricing = $upgrade_option['pricing'];
+            $meta_bits = [
+                wc_product_license_get_site_count_text($target_variation['sites'], 'allowed'),
+                $this->get_license_variation_duration_label($target_variation),
+            ];
+            if ($pricing['credit'] > 0) {
+                $meta_bits[] = sprintf(__('Credit %s', 'wc-product-license'), wp_strip_all_tags(wc_price($pricing['credit'])));
+            }
+            if ($pricing['discount_amount'] > 0) {
+                $meta_bits[] = sprintf(__('Discount %s', 'wc-product-license'), wp_strip_all_tags(wc_price($pricing['discount_amount'])));
+            }
+
             $html .= '<div class="upgrade-option">';
             $html .= '<label>';
-            $html .= '<input type="radio" name="upgrade_variation" value="' . esc_attr($index) . '"' . checked((string) $default_index, (string) $index, false) . '>';
-            $html .= '<span class="variation-title">' . esc_html($variation['title']) . '</span>';
-            $html .= '<span class="variation-details">' . sprintf(
-                __('%1$s, %2$s - %3$s', 'wc-product-license'),
-                wc_product_license_get_site_count_text($variation['sites'], 'allowed'),
-                $this->get_license_variation_duration_label($variation),
-                wc_price($this->get_license_variation_price($variation, $product))
-            ) . '</span>';
-            if (!empty($variation['description'])) {
-                $html .= '<span class="variation-description">' . esc_html($variation['description']) . '</span>';
+            $html .= '<input type="radio" name="upgrade_path" value="' . esc_attr($upgrade_option['token']) . '" data-cart-url="' . esc_url($upgrade_url) . '"' . checked((string) $upgrade_option['token'], $default_upgrade_token, false) . '>';
+            $html .= '<span class="variation-title">' . esc_html($upgrade_option['title']) . '</span>';
+            $html .= '<span class="variation-details">' . esc_html(implode(' | ', array_filter($meta_bits))) . '</span>';
+            $html .= '<span class="variation-price">' . sprintf(__('You pay %s', 'wc-product-license'), wp_kses_post(wc_price($pricing['final_price']))) . '</span>';
+            if (!empty($upgrade_option['description'])) {
+                $html .= '<span class="variation-description">' . esc_html($upgrade_option['description']) . '</span>';
             }
             $html .= '</label>';
             $html .= '</div>';
@@ -1807,7 +2900,7 @@ class WC_Product_License_Manager
         $html .= '</div>';
         $html .= '<div class="upgrade-actions">';
         $html .= '<a href="#" class="button cancel-upgrade">' . __('Cancel', 'wc-product-license') . '</a> ';
-        $html .= '<a href="#" class="button button-primary confirm-upgrade" data-base-url="' . esc_url($upgrade_url) . '">' . __('Proceed to Checkout', 'wc-product-license') . '</a>';
+        $html .= '<a href="#" class="button button-primary confirm-upgrade">' . __('Proceed to Checkout', 'wc-product-license') . '</a>';
         $html .= '</div>';
         $html .= '</div>';
 
@@ -1822,17 +2915,7 @@ class WC_Product_License_Manager
      */
     public function process_license_upgrade($cart_item_key, $product_id, $quantity, $variation_id, $variation, $cart_item_data)
     {
-        if (isset($_GET['license_upgrade']) && isset($_GET['upgrade_variation'])) {
-            $license_key = sanitize_text_field($_GET['license_upgrade']);
-            $variation_index = absint($_GET['upgrade_variation']);
-
-            // Store upgrade info in cart item
-            WC()->cart->cart_contents[$cart_item_key]['license_upgrade'] = [
-                'license_key' => $license_key,
-                'variation_index' => $variation_index
-            ];
-
-            // Add notice
+        if (isset(WC()->cart->cart_contents[$cart_item_key]['license_upgrade'])) {
             wc_add_notice(__('License upgrade product added to cart. Complete checkout to upgrade your license.', 'wc-product-license'), 'notice');
         }
     }
@@ -1888,12 +2971,109 @@ class WC_Product_License_Manager
         return true; // Allow public access, but you might want to add authentication
     }
 
+    private function get_request_value($request, $key, $default = '')
+    {
+        if ($request instanceof WP_REST_Request) {
+            $value = $request->get_param($key);
+            return $value !== null ? $value : $default;
+        }
+
+        if (is_array($request) && isset($request[$key])) {
+            return $request[$key];
+        }
+
+        return $default;
+    }
+
+    private function get_release_download_payload($product, $download_id)
+    {
+        $download_options = $this->get_download_options_from_product($product);
+        if (empty($download_options)) {
+            return [];
+        }
+
+        if ($download_id !== '' && isset($download_options[$download_id])) {
+            return $download_options[$download_id];
+        }
+
+        return reset($download_options);
+    }
+
+    private function get_release_rollout_payload($settings, $license_key, $installed_version = '')
+    {
+        $payload = [
+            'enabled' => !empty($settings['rollout_enabled']),
+            'percentage' => (int) $settings['rollout_percentage'],
+            'version_gate_enabled' => !empty($settings['rollout_version_gate_enabled']),
+            'minimum_installed_version' => $settings['rollout_min_version'],
+            'eligible' => true,
+        ];
+
+        if (!$payload['enabled']) {
+            return $payload;
+        }
+
+        $bucket = (abs(crc32((string) $license_key)) % 100) + 1;
+        $payload['eligible'] = $bucket <= $payload['percentage'];
+        $payload['bucket'] = $bucket;
+
+        if ($payload['version_gate_enabled'] && $payload['minimum_installed_version'] !== '' && $installed_version !== '') {
+            $payload['eligible'] = $payload['eligible'] && version_compare((string) $installed_version, $payload['minimum_installed_version'], '<=');
+        }
+
+        return $payload;
+    }
+
+    private function build_release_payload($product, $settings, $channel, $license_key, $installed_version = '')
+    {
+        $channel = $channel === 'beta' ? 'beta' : 'stable';
+        $is_beta = $channel === 'beta';
+        $version = $is_beta ? $settings['beta_version'] : $settings['version'];
+        $download_id = $is_beta ? $settings['beta_download_id'] : $settings['release_download_id'];
+        $changelog = $is_beta ? $settings['beta_changelog'] : $settings['changelog'];
+        $download = $this->get_release_download_payload($product, $download_id);
+        $rollout = $is_beta
+            ? ['enabled' => false, 'percentage' => 100, 'version_gate_enabled' => false, 'minimum_installed_version' => '', 'eligible' => !empty($settings['beta_enabled'])]
+            : $this->get_release_rollout_payload($settings, $license_key, $installed_version);
+        $enabled = $is_beta ? !empty($settings['beta_enabled']) : true;
+        $available = $enabled && $version !== '' && !empty($download) && !empty($rollout['eligible']);
+        $update_available = $available;
+
+        if ($installed_version !== '' && $version !== '') {
+            $update_available = version_compare($version, (string) $installed_version, '>');
+        }
+
+        return [
+            'channel' => $channel,
+            'enabled' => $enabled,
+            'available' => $available,
+            'update_available' => $update_available,
+            'version' => $version,
+            'download' => $download,
+            'download_url' => isset($download['url']) ? $download['url'] : '',
+            'download_name' => isset($download['name']) ? $download['name'] : '',
+            'changelog' => $changelog,
+            'upgrade_notice' => $is_beta ? '' : $settings['upgrade_notice'],
+            'rollout' => $rollout,
+        ];
+    }
+
+    private function build_readme_payload($settings)
+    {
+        return [
+            'source' => $settings['readme_source'],
+            'url' => $settings['readme_url'],
+            'meta' => $settings['readme_meta'],
+            'sections' => $settings['readme_sections'],
+        ];
+    }
+
     /**
      * Get license data via API
      */
     public function get_license_data($request)
     {
-        $license_key = sanitize_text_field($request['key']);
+        $license_key = sanitize_text_field((string) $this->get_request_value($request, 'key', ''));
         $license = $this->get_license_by_key($license_key);
 
         if (!$license) {
@@ -1904,6 +3084,27 @@ class WC_Product_License_Manager
         $active_sites = maybe_unserialize($license->active_sites) ?: [];
         $sites_active = count($active_sites);
         $sites_allowed = (int) $license->sites_allowed;
+        $settings = $this->get_license_product_settings($license->product_id);
+        $license_context = $this->get_license_order_item_context($license);
+        $selected_variation = isset($license_context['variation']) && is_array($license_context['variation'])
+            ? $license_context['variation']
+            : $this->get_default_license_variation($license->product_id);
+        $installed_version = sanitize_text_field((string) $this->get_request_value($request, 'installed_version', ''));
+        $requested_channel = sanitize_text_field((string) $this->get_request_value($request, 'channel', 'stable'));
+        $stable_release = $this->build_release_payload($product, $settings, 'stable', $license_key, $installed_version);
+        $beta_release = $this->build_release_payload($product, $settings, 'beta', $license_key, $installed_version);
+        $active_release = $requested_channel === 'beta' ? $beta_release : $stable_release;
+        $allowed_download_ids = $selected_variation ? $this->get_license_variation_download_ids($selected_variation, $product) : [];
+        $allowed_downloads = [];
+
+        if ($product) {
+            $download_options = $this->get_download_options_from_product($product);
+            foreach ($allowed_download_ids as $download_id) {
+                if (isset($download_options[$download_id])) {
+                    $allowed_downloads[] = $download_options[$download_id];
+                }
+            }
+        }
 
         return rest_ensure_response([
             'success' => true,
@@ -1917,7 +3118,22 @@ class WC_Product_License_Manager
             'activation_usage_label' => wc_product_license_get_activation_usage_text($sites_active, $sites_allowed),
             'is_unlimited_sites' => wc_product_license_is_unlimited_sites($sites_allowed),
             'expires_at' => $license->expires_at,
-            'active_sites' => $active_sites
+            'active_sites' => $active_sites,
+            'package' => [
+                'name' => $selected_variation ? $selected_variation['title'] : '',
+                'index' => $selected_variation ? $selected_variation['index'] : '',
+                'sites_allowed' => $selected_variation ? $selected_variation['sites'] : $sites_allowed,
+                'validity' => $selected_variation ? $this->get_license_variation_duration_label($selected_variation) : '',
+                'downloads' => $allowed_downloads,
+                'downloads_summary' => $selected_variation ? $this->get_license_variation_download_summary($selected_variation, $product) : '',
+            ],
+            'requirements' => $settings['requirements'],
+            'readme' => $this->build_readme_payload($settings),
+            'release_channel' => $active_release,
+            'releases' => [
+                'stable' => $stable_release,
+                'beta' => $beta_release,
+            ],
         ]);
     }
 
@@ -2143,6 +3359,19 @@ class WC_Product_License_Manager
             true
         );
 
+        wp_localize_script('wc-license-manager-frontend', 'wcLicenseManager', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('wc-license-manager'),
+            'i18n' => [
+                'activating' => __('Activating...', 'wc-product-license'),
+                'deactivating' => __('Deactivating...', 'wc-product-license'),
+                'deactivatingAll' => __('Deactivating all sites...', 'wc-product-license'),
+                'deleting' => __('Deleting...', 'wc-product-license'),
+                'confirmDeactivateAll' => __('Are you sure you want to deactivate all sites?', 'wc-product-license'),
+                'confirmDelete' => __('Are you sure you want to delete this license?', 'wc-product-license')
+            ]
+        ]);
+
         if (function_exists('is_woocommerce') && is_woocommerce()) {
             wp_enqueue_style('wc-license-manager-styles');
             wp_enqueue_script('wc-license-manager-frontend');
@@ -2155,6 +3384,10 @@ class WC_Product_License_Manager
     public function register_admin_scripts($hook)
     {
         if ($hook == 'post.php' || $hook == 'post-new.php') {
+            $current_product_id = isset($_GET['post']) ? absint($_GET['post']) : 0;
+            $current_variations = $current_product_id ? $this->get_license_variations($current_product_id) : [];
+            $product_map = $this->get_admin_license_product_map($current_product_id, $current_variations);
+
             wp_enqueue_style(
                 'wc-license-manager-admin',
                 plugin_dir_url(__FILE__) . 'assets/css/admin.css',
@@ -2173,6 +3406,8 @@ class WC_Product_License_Manager
             wp_localize_script('wc-license-manager-admin', 'wcLicenseAdmin', [
                 'ajaxUrl' => admin_url('admin-ajax.php'),
                 'cartUrl' => wc_get_cart_url(),
+                'currentProductId' => $current_product_id,
+                'licenseProducts' => $product_map,
                 'nonce' => wp_create_nonce('wc-license-admin-nonce'),
                 'i18n' => [
                     'addPackage' => __('Add package', 'wc-product-license'),
@@ -2203,7 +3438,20 @@ class WC_Product_License_Manager
                     'singleDownloadAuto' => __('This package will include the product’s single downloadable file automatically.', 'wc-product-license'),
                     'noDownloadsMessage' => __('Add files in WooCommerce’s Downloads tab to map file access per package.', 'wc-product-license'),
                     'copyShortcode' => __('Copy shortcode', 'wc-product-license'),
-                    'copyLink' => __('Copy link', 'wc-product-license')
+                    'copyLink' => __('Copy link', 'wc-product-license'),
+                    'addUpgradePath' => __('Add upgrade path', 'wc-product-license'),
+                    'anyPackage' => __('Any package', 'wc-product-license'),
+                    'defaultPackage' => __('Default package', 'wc-product-license'),
+                    'chooseLicensedProduct' => __('Choose a licensed product', 'wc-product-license'),
+                    'upgradePathTitle' => __('Upgrade route', 'wc-product-license'),
+                    'upgradePathDescription' => __('Shown in the upgrade selector to explain who this path is for.', 'wc-product-license'),
+                    'sectionPackages' => __('Packages', 'wc-product-license'),
+                    'sectionVersions' => __('Versions', 'wc-product-license'),
+                    'sectionBetas' => __('Betas', 'wc-product-license'),
+                    'sectionRequirements' => __('Requirements', 'wc-product-license'),
+                    'sectionReadme' => __('Readme', 'wc-product-license'),
+                    'sectionUpgrades' => __('Upgrades', 'wc-product-license'),
+                    'sectionPresetKeys' => __('Preset Keys', 'wc-product-license')
                 ]
             ]);
         }
@@ -2406,7 +3654,21 @@ class WC_Product_License_Manager
         }
 
         if ($this->get_requested_license_variation($target_product_id)) {
-            return $passed;
+            if (!$this->product_requires_preset_keys($target_product_id)) {
+                return $passed;
+            }
+
+            if (!empty($this->get_available_preset_keys($target_product_id, true))) {
+                return $passed;
+            }
+
+            static $preset_notice_added = false;
+            if (!$preset_notice_added) {
+                wc_add_notice(__('This licensed product has no preset keys left and automatic key generation is disabled. Add more preset keys before selling it again.', 'wc-product-license'), 'error');
+                $preset_notice_added = true;
+            }
+
+            return false;
         }
 
         static $notice_added = false;
@@ -2560,6 +3822,15 @@ class WC_Product_License_Manager
             }
         }
 
+        if (isset($cart_item['license_upgrade']['pricing'])) {
+            $pricing = $cart_item['license_upgrade']['pricing'];
+            $item_data[] = [
+                'key' => __('Upgrade total', 'wc-product-license'),
+                'value' => wp_strip_all_tags(wc_price($pricing['final_price'])),
+                'display' => ''
+            ];
+        }
+
         return $item_data;
     }
 
@@ -2595,9 +3866,26 @@ class WC_Product_License_Manager
     public function modify_cart_item_price($cart_item_data, $product_id, $variation_id)
     {
         $selected_variation = $this->get_requested_license_variation($product_id);
-        if ($selected_variation && $selected_variation['price'] !== '') {
+        if ($selected_variation) {
             $cart_item_data['original_price'] = get_post_meta($product_id, '_price', true);
             $cart_item_data['license_variation'] = $selected_variation;
+        }
+
+        $upgrade_context = $this->get_requested_upgrade_context($product_id);
+        if ($upgrade_context) {
+            $cart_item_data['license_upgrade'] = [
+                'license_key' => $upgrade_context['license_key'],
+                'source_product_id' => $upgrade_context['source_product_id'],
+                'path_index' => $upgrade_context['token'],
+                'target_product_id' => $upgrade_context['target_product_id'],
+                'target_variation_index' => $upgrade_context['target_variation']['index'],
+                'pricing' => $upgrade_context['pricing'],
+                'target_label' => $upgrade_context['title'],
+            ];
+
+            if (!isset($cart_item_data['license_variation'])) {
+                $cart_item_data['license_variation'] = $upgrade_context['target_variation'];
+            }
         }
 
         return $cart_item_data;
@@ -2613,7 +3901,12 @@ class WC_Product_License_Manager
         }
 
         foreach ($cart_object->get_cart() as $cart_item) {
-            if (isset($cart_item['license_variation']) && !empty($cart_item['license_variation']['price'])) {
+            if (isset($cart_item['license_upgrade']['pricing']['final_price'])) {
+                $cart_item['data']->set_price($cart_item['license_upgrade']['pricing']['final_price']);
+                continue;
+            }
+
+            if (isset($cart_item['license_variation']) && $cart_item['license_variation']['price'] !== '') {
                 $cart_item['data']->set_price($cart_item['license_variation']['price']);
             }
         }

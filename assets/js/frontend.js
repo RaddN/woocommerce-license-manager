@@ -321,14 +321,19 @@ jQuery(document).ready(function($) {
                     $modal.on('click', '.confirm-upgrade', function(e) {
                         e.preventDefault();
                         
-                        const selectedVariation = $modal.find('input[name="upgrade_variation"]:checked').val();
-                        if (!selectedVariation) {
+                        const $selectedPath = $modal.find('input[name="upgrade_path"]:checked');
+                        if (!$selectedPath.length) {
                             alert('Please select a package option.');
                             return;
                         }
                         
-                        const baseUrl = $(this).data('base-url');
-                        window.location.href = baseUrl + '&upgrade_variation=' + selectedVariation;
+                        const cartUrl = $selectedPath.data('cart-url');
+                        if (!cartUrl) {
+                            alert('Unable to start this upgrade right now.');
+                            return;
+                        }
+
+                        window.location.href = cartUrl;
                     });
                 } else {
                     showMessage(response.data.message, 'error');

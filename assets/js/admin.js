@@ -1,16 +1,26 @@
 jQuery(document).ready(function($) {
     var $panel = $("#wc_license_product_data");
-    if (!$panel.length) {
+    var $settingsMetabox = $("#wc_license_settings_metabox");
+    if (!$panel.length && !$settingsMetabox.length) {
         return;
     }
 
     var $builder = $panel.find("[data-license-builder]");
+    var $settingsBuilder = $settingsMetabox.filter("[data-license-settings-builder]");
+    if (!$settingsBuilder.length) {
+        $settingsBuilder = $settingsMetabox.find("[data-license-settings-builder]").first();
+    }
+    var $interactiveRoots = $panel.add($settingsMetabox);
     var $packageList = $panel.find("[data-license-package-list]");
+    var $upgradePathList = $settingsMetabox.find("[data-license-upgrade-path-list]");
     var $packageCountStat = $panel.find("[data-license-package-count]");
     var $downloadCountStat = $panel.find("[data-license-download-count]");
     var template = $("#tmpl-wc-license-package").html() || "";
+    var upgradeTemplate = $("#tmpl-wc-license-upgrade-path").html() || "";
     var nextIndex = 0;
+    var nextUpgradeIndex = 0;
     var adminConfig = window.wcLicenseAdmin || {};
+    var licenseProducts = adminConfig.licenseProducts || {};
     var downloadSyncTimer = null;
     var normalizedDownloadIdMap = {};
 
@@ -47,6 +57,68 @@ jQuery(document).ready(function($) {
             "add-to-cart": getProductId(),
             "license_variation": index
         });
+    }
+
+    function getCurrentProductId() {
+        return String(adminConfig.currentProductId || getProductId() || "").trim();
+    }
+
+    function getCurrentPackageOptions() {
+        return $packageList.find("[data-license-package]").map(function(position) {
+            var $card = $(this);
+            var index = String($card.data("packageIndex"));
+            var title = $.trim($card.find('input[name^="license_variation_title"]').val()) || (
+                getAdminI18n("defaultPackageName", "Package") + " " + String(position + 1)
+            );
+
+            return {
+                value: index,
+                label: title
+            };
+        }).get();
+    }
+
+    function getPackageOptionsForProduct(productId) {
+        var normalizedProductId = String(productId || "");
+        var currentProductId = getCurrentProductId();
+
+        if (normalizedProductId && currentProductId && normalizedProductId === currentProductId) {
+            return getCurrentPackageOptions();
+        }
+
+        if (licenseProducts[normalizedProductId] && $.isArray(licenseProducts[normalizedProductId].packages)) {
+            return licenseProducts[normalizedProductId].packages;
+        }
+
+        return [];
+    }
+
+    function renderUpgradePackageOptions(productId, selectedValue) {
+        var selected = String(selectedValue || "default");
+        var options = [
+            '<option value="default"' + (selected === "default" ? " selected" : "") + ">" + escapeHtml(getAdminI18n("defaultPackage", "Default package")) + "</option>"
+        ];
+
+        $.each(getPackageOptionsForProduct(productId), function(_, option) {
+            var value = String(option.value);
+            options.push('<option value="' + escapeAttribute(value) + '"' + (value === selected ? " selected" : "") + ">" + escapeHtml(option.label) + "</option>");
+        });
+
+        return options.join("");
+    }
+
+    function renderSourcePackageOptions(selectedValue) {
+        var selected = String(selectedValue || "any");
+        var options = [
+            '<option value="any"' + (selected === "any" ? " selected" : "") + ">" + escapeHtml(getAdminI18n("anyPackage", "Any package")) + "</option>"
+        ];
+
+        $.each(getCurrentPackageOptions(), function(_, option) {
+            var value = String(option.value);
+            options.push('<option value="' + escapeAttribute(value) + '"' + (value === selected ? " selected" : "") + ">" + escapeHtml(option.label) + "</option>");
+        });
+
+        return options.join("");
     }
 
     function escapeHtml(value) {
@@ -185,7 +257,6 @@ jQuery(document).ready(function($) {
             '<div class="wc-license-copy-modal__hero">',
             '<span class="wc-license-copy-modal__hero-icon" aria-hidden="true">' + getInlineIcon(options.heroIcon || "layers") + "</span>",
             '<div class="wc-license-copy-modal__hero-copy">',
-            '<span class="wc-license-copy-modal__eyebrow">' + escapeHtml(options.eyebrow || getAdminI18n("copyPopupEyebrow", "Portable snippets")) + "</span>",
             '<h2>' + escapeHtml(title) + "</h2>",
             description ? '<p class="wc-license-copy-modal__intro">' + escapeHtml(description) + "</p>" : "",
             "</div>",
@@ -414,6 +485,60 @@ jQuery(document).ready(function($) {
         }
     }
 
+    function activateSettingsSection(sectionKey) {
+        if (!$settingsMetabox.length) {
+            return;
+        }
+
+        var normalizedKey = String(sectionKey || "versions");
+
+        $settingsMetabox.find(".wc-license-editor-nav__item")
+            .removeClass("is-active")
+            .filter('[data-license-section-target="' + normalizedKey + '"]')
+            .addClass("is-active");
+
+        $settingsMetabox.find(".wc-license-editor-section")
+            .removeClass("is-active")
+            .filter('[data-license-editor-section="' + normalizedKey + '"]')
+            .addClass("is-active");
+    }
+
+    function syncUpgradePathPositions() {
+        $upgradePathList.find("[data-license-upgrade-path]").each(function(position) {
+            $(this).find(".wc-license-upgrade-position").val(position);
+        });
+    }
+
+    function syncUpgradePathRow($row) {
+        if (!$row || !$row.length) {
+            return;
+        }
+
+        var $sourceSelect = $row.find(".wc-license-upgrade-source-package");
+        var selectedProduct = String($row.find(".wc-license-upgrade-product").val() || "");
+        var $packageSelect = $row.find(".wc-license-upgrade-package");
+        var selectedSource = String($sourceSelect.val() || "any");
+        var selectedPackage = String($packageSelect.val() || "default");
+
+        $sourceSelect.html(renderSourcePackageOptions(selectedSource));
+        if (!$sourceSelect.find('option[value="' + selectedSource + '"]').length) {
+            $sourceSelect.val("any");
+        }
+
+        $packageSelect.html(renderUpgradePackageOptions(selectedProduct, selectedPackage));
+
+        if (!$packageSelect.find('option[value="' + selectedPackage + '"]').length) {
+            $packageSelect.val("default");
+        }
+    }
+
+    function syncAllUpgradePaths() {
+        $upgradePathList.find("[data-license-upgrade-path]").each(function() {
+            syncUpgradePathRow($(this));
+        });
+        syncUpgradePathPositions();
+    }
+
     function syncPackageDownloadSections($cards, downloads) {
         var availableDownloads = downloads || getAvailableDownloads();
         var $targetCards = $cards && $cards.length ? $cards : $packageList.find("[data-license-package]");
@@ -470,6 +595,13 @@ jQuery(document).ready(function($) {
         }
     });
 
+    $upgradePathList.find("[data-license-upgrade-path]").each(function() {
+        var index = parseInt($(this).attr("data-upgrade-path-index"), 10);
+        if (!isNaN(index)) {
+            nextUpgradeIndex = Math.max(nextUpgradeIndex, index);
+        }
+    });
+
     function syncPackagePositions() {
         $packageList.find("[data-license-package]").each(function(position) {
             $(this).find(".wc-license-package-position").val(position);
@@ -479,6 +611,7 @@ jQuery(document).ready(function($) {
     function syncBuilderState() {
         var enabled = $("#_is_license_product").is(":checked");
         $builder.toggleClass("is-disabled", !enabled);
+        $settingsBuilder.toggleClass("is-disabled", !enabled);
     }
 
     function syncLifetimeState($scope) {
@@ -532,6 +665,7 @@ jQuery(document).ready(function($) {
         });
 
         updateHeroStats();
+        syncAllUpgradePaths();
     }
 
     function addPackageCard() {
@@ -548,9 +682,27 @@ jQuery(document).ready(function($) {
         syncPackageDownloadSections($newCard);
     }
 
+    function addUpgradePathRow() {
+        if (!upgradeTemplate || !$upgradePathList.length) {
+            return;
+        }
+
+        nextUpgradeIndex += 1;
+        var html = upgradeTemplate.replace(/__INDEX__/g, String(nextUpgradeIndex));
+        $upgradePathList.append(html);
+        var $newRow = $upgradePathList.find("[data-license-upgrade-path]").last();
+        syncUpgradePathRow($newRow);
+        syncUpgradePathPositions();
+    }
+
     $panel.on("click", ".wc-license-add-package", function(e) {
         e.preventDefault();
         addPackageCard();
+    });
+
+    $interactiveRoots.on("click", ".wc-license-add-upgrade-path", function(e) {
+        e.preventDefault();
+        addUpgradePathRow();
     });
 
     $panel.on("click", ".wc-license-remove-package", function(e) {
@@ -574,6 +726,20 @@ jQuery(document).ready(function($) {
 
         refreshPackageStates();
         syncPackageDownloadSections();
+    });
+
+    $interactiveRoots.on("click", ".wc-license-remove-upgrade-path", function(e) {
+        e.preventDefault();
+
+        var $row = $(this).closest("[data-license-upgrade-path]");
+        $row.remove();
+
+        if (!$upgradePathList.find("[data-license-upgrade-path]").length) {
+            addUpgradePathRow();
+            return;
+        }
+
+        syncUpgradePathPositions();
     });
 
     $panel.on("click", ".wc-license-copy-package", function(e) {
@@ -627,6 +793,10 @@ jQuery(document).ready(function($) {
     });
 
     $panel.on("change", "#_is_license_product", syncBuilderState);
+    $settingsMetabox.on("click", ".wc-license-editor-nav__item", function(e) {
+        e.preventDefault();
+        activateSettingsSection($(this).data("licenseSectionTarget"));
+    });
     $panel.on("change", ".wc-license-lifetime-toggle", function() {
         syncLifetimeState($(this));
     });
@@ -651,6 +821,10 @@ jQuery(document).ready(function($) {
 
         syncPackageDownloadSections($card);
     });
+    $interactiveRoots.on("change", ".wc-license-upgrade-product", function() {
+        syncUpgradePathRow($(this).closest("[data-license-upgrade-path]"));
+    });
+    $interactiveRoots.on("input change", 'input[name^="license_variation_title"]', syncAllUpgradePaths);
     $panel.on("change", 'input[name="license_variation_default"], input[name^="license_variation_recommended"]', refreshPackageStates);
 
     if ($.fn.sortable) {
@@ -698,6 +872,8 @@ jQuery(document).ready(function($) {
 
     refreshPackageStates();
     syncBuilderState();
+    syncAllUpgradePaths();
+    activateSettingsSection("versions");
     bindDownloadSync();
 });
 

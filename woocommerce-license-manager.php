@@ -54,13 +54,60 @@ function your_plugin_activation_function()
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($sql);
 }
+
+function wc_product_license_get_plugin_status()
+{
+    $status = get_option('wc_product_license_status', '');
+
+    if ($status === '') {
+        $status = get_option('plugincywc_product_license_status', '');
+    }
+
+    return is_string($status) ? strtolower($status) : '';
+}
+
+function wc_product_license_get_plugin_expiry()
+{
+    $expiry = get_option('wc_product_license_expiry', '');
+
+    if ($expiry === '') {
+        $expiry = get_option('plugincywc_product_license_expiry', '');
+    }
+
+    // Older builds used "yes" as a flag, not a date.
+    if ($expiry === 'yes') {
+        return '';
+    }
+
+    return is_string($expiry) ? $expiry : '';
+}
+
+function wc_product_license_is_active()
+{
+    if (wc_product_license_get_plugin_status() !== 'active') {
+        return false;
+    }
+
+    $license_expiry = wc_product_license_get_plugin_expiry();
+    if ($license_expiry === '') {
+        return true;
+    }
+
+    $expiry_timestamp = strtotime($license_expiry);
+    if ($expiry_timestamp === false) {
+        return true;
+    }
+
+    return $expiry_timestamp >= current_time('timestamp');
+}
+
 class WC_Product_License_Manager
 {
 
     public function __construct()
     {
 
-        if(get_option('plugincywc_product_license_expiry') == 'yes') {
+        if (wc_product_license_is_active()) {
             
         // Product editing metabox
         add_action('woocommerce_product_options_general_product_data', [$this, 'add_license_option_to_products']);
@@ -1485,13 +1532,23 @@ require_once plugin_dir_path(__FILE__) . 'include/admin.php';
 function product_license_init()
 {
     // Check if license has expired
-    $license_expiry = get_option('plugincywc_product_license_expiry');
+    $license_expiry = wc_product_license_get_plugin_expiry();
     $current_date = current_time('timestamp');
 
     // If expiry date exists and has passed
-    if ($license_expiry && strtotime($license_expiry) < $current_date) {
+    if ($license_expiry) {
+        $expiry_timestamp = strtotime($license_expiry);
+    } else {
+        $expiry_timestamp = false;
+    }
+
+    if ($expiry_timestamp && $expiry_timestamp < $current_date) {
         // Update the license status to expired
-        update_option('plugincywc_product_license_status', 'expired');
+        update_option('wc_product_license_status', 'expired');
+
+        if (get_option('plugincywc_product_license_status', '') !== '') {
+            update_option('plugincywc_product_license_status', 'expired');
+        }
 
         // You might want to log this change
         error_log('License expired on ' . $license_expiry . '. Status updated to expired.');
